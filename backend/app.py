@@ -2,6 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from backend.routes.generate import router as generate_router
+from backend.exceptions.exception_handler import register_exception_handlers
 
 app = FastAPI(
     title="AI Terraform Landing Zone Generator",
@@ -17,6 +18,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Gestion centralisée des erreurs
+register_exception_handlers(app)
 
 # Routes
 app.include_router(generate_router, prefix="/api")
