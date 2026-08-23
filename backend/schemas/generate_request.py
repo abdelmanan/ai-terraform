@@ -1,6 +1,6 @@
 import re
 
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 
 PROJECT_NAME_PATTERN = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_-]{0,62}$")
 
@@ -15,11 +15,11 @@ class GenerateRequest(BaseModel):
 
     template: str = "landing-zone"
 
-    availability_zones: int = 2
+    availability_zones: int = Field(default=2, ge=1, le=10)
 
-    public_subnets: int = 2
+    public_subnets: int = Field(default=2, ge=1, le=10)
 
-    private_subnets: int = 2
+    private_subnets: int = Field(default=2, ge=1, le=10)
 
     enable_nat_gateway: bool = True
 

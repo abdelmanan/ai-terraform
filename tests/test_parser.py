@@ -44,9 +44,13 @@ def test_parse_unrecognized_format_raises(parser):
 def test_parse_missing_required_files_raises(parser):
     response = (
         "### provider.tf\n"
+        "BEGIN_TERRAFORM\n"
         "provider \"aws\" {}\n"
+        "END_TERRAFORM\n"
         "### main.tf\n"
+        "BEGIN_TERRAFORM\n"
         "resource \"aws_vpc\" \"main\" {}\n"
+        "END_TERRAFORM\n"
     )
 
     with pytest.raises(ApiException) as exc_info:
@@ -61,13 +65,14 @@ def test_parse_missing_required_files_raises(parser):
 def test_parse_file_with_empty_content_raises(parser):
     response = (
         "### provider.tf\n"
-        "\n"
+        "BEGIN_TERRAFORM\n"
+        "END_TERRAFORM\n"
         "### main.tf\n"
-        "resource \"aws_vpc\" \"main\" {}\n"
-        "### variables.tf\nx\n"
-        "### outputs.tf\nx\n"
-        "### terraform.tfvars\nx\n"
-        "### README.md\nx\n"
+        "BEGIN_TERRAFORM\nresource \"aws_vpc\" \"main\" {}\nEND_TERRAFORM\n"
+        "### variables.tf\nBEGIN_TERRAFORM\nx\nEND_TERRAFORM\n"
+        "### outputs.tf\nBEGIN_TERRAFORM\nx\nEND_TERRAFORM\n"
+        "### terraform.tfvars\nBEGIN_TERRAFORM\nx\nEND_TERRAFORM\n"
+        "### README.md\nBEGIN_TEXT\nx\nEND_TEXT\n"
     )
 
     with pytest.raises(ApiException) as exc_info:
@@ -81,3 +86,32 @@ def test_readme_begin_end_text_markers_are_stripped(parser, valid_ai_response):
     files = parser.parse(valid_ai_response)
     assert "BEGIN_TEXT" not in files["README.md"]
     assert "END_TEXT" not in files["README.md"]
+
+
+def test_markdown_heading_inside_readme_does_not_break_parsing(parser):
+    response = (
+        "### provider.tf\n"
+        "BEGIN_TERRAFORM\nprovider \"aws\" {}\nEND_TERRAFORM\n"
+        "### main.tf\n"
+        "BEGIN_TERRAFORM\nresource \"aws_vpc\" \"main\" {}\nEND_TERRAFORM\n"
+        "### variables.tf\n"
+        "BEGIN_TERRAFORM\nvariable \"region\" { type = string }\nEND_TERRAFORM\n"
+        "### outputs.tf\n"
+        "BEGIN_TERRAFORM\noutput \"vpc_id\" { value = aws_vpc.main.id }\nEND_TERRAFORM\n"
+        "### terraform.tfvars\n"
+        "BEGIN_TERRAFORM\nregion = \"eu-west-1\"\nEND_TERRAFORM\n"
+        "### README.md\n"
+        "BEGIN_TEXT\n"
+        "# Landing Zone\n"
+        "\n"
+        "### Usage\n"
+        "\n"
+        "Run terraform init.\n"
+        "END_TEXT\n"
+    )
+
+    files = parser.parse(response)
+
+    assert set(files.keys()) == TerraformParser.REQUIRED_FILES
+    assert "### Usage" in files["README.md"]
+    assert "Run terraform init." in files["README.md"]

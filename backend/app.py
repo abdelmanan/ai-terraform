@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from backend.config import settings
 from backend.routes.generate import router as generate_router
 from backend.exceptions.exception_handler import register_exception_handlers
 
@@ -13,7 +14,7 @@ app = FastAPI(
 # Autoriser le frontend
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=settings.CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

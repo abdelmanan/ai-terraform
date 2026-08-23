@@ -12,3 +12,6 @@ __pycache__/
 *.tfstate
 *.tfstate.*
 .terraform-plugin-cache/
+
+# Generated landing zone projects (runtime output of /generate)
+generated/
