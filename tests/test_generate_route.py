@@ -48,7 +48,7 @@ def test_generate_success(valid_generate_payload):
     assert body["project"] == valid_generate_payload["project_name"]
     assert body["generated_files"] == ["main.tf"]
     assert body["validation"]["valid"] is True
-    assert body["download"] == f"generated/{valid_generate_payload['project_name']}.zip"
+    assert body["download"] == f"/api/download/{valid_generate_payload['project_name']}"
 
 
 def test_generate_reports_terraform_validation_failure(monkeypatch, valid_generate_payload):
@@ -106,5 +106,32 @@ def test_generate_rejects_invalid_project_name(valid_generate_payload):
     valid_generate_payload["project_name"] = "../evil"
 
     response = client.post("/api/generate", json=valid_generate_payload)
+
+    assert response.status_code == 422
+
+
+def test_download_returns_zip(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "generated").mkdir()
+    (tmp_path / "generated" / "my-project.zip").write_bytes(b"PK\x03\x04fake-zip")
+
+    response = client.get("/api/download/my-project")
+
+    assert response.status_code == 200
+    assert response.content == b"PK\x03\x04fake-zip"
+    assert response.headers["content-type"] == "application/zip"
+
+
+def test_download_missing_project_returns_404(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "generated").mkdir()
+
+    response = client.get("/api/download/does-not-exist")
+
+    assert response.status_code == 404
+
+
+def test_download_rejects_invalid_project_name():
+    response = client.get("/api/download/invalid%20name")
 
     assert response.status_code == 422

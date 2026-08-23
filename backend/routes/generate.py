@@ -1,6 +1,10 @@
-from fastapi import APIRouter
+import os
 
-from backend.schemas.generate_request import GenerateRequest
+from fastapi import APIRouter
+from fastapi.responses import FileResponse
+
+from backend.exceptions.api_exception import ApiException
+from backend.schemas.generate_request import PROJECT_NAME_PATTERN, GenerateRequest
 from backend.services.prompt_service import PromptService
 from backend.services.ai.terraform_ai_service import TerraformAIService
 from backend.parser.terraform_parser import TerraformParser
@@ -40,5 +44,27 @@ def generate(request: GenerateRequest):
         "project": request.project_name,
         "generated_files": list(files.keys()),
         "validation": validation,
-        "download": zip_path
+        "download": f"/api/download/{request.project_name}"
     }
+
+
+@router.get("/download/{project_name}")
+def download(project_name: str):
+
+    if not PROJECT_NAME_PATTERN.match(project_name):
+        raise ApiException(message="Invalid project name.", status_code=422)
+
+    zip_path = os.path.abspath(f"generated/{project_name}.zip")
+    generated_dir_abs = os.path.abspath("generated")
+
+    if os.path.commonpath([generated_dir_abs, zip_path]) != generated_dir_abs:
+        raise ApiException(message="Invalid project name.", status_code=422)
+
+    if not os.path.isfile(zip_path):
+        raise ApiException(message="Generated project not found.", status_code=404)
+
+    return FileResponse(
+        zip_path,
+        media_type="application/zip",
+        filename=f"{project_name}.zip"
+    )

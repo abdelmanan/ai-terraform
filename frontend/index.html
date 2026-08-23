@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AI Terraform Landing Zone Generator</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div id="app">
+    <header>
+      <h1>AI Terraform Landing Zone Generator</h1>
+      <p>Génère une AWS Landing Zone Terraform (VPC, subnets, routing, sécurité) via IA</p>
+    </header>
+
+    <main>
+      <section class="panel">
+        <h2>Configuration</h2>
+        <form @submit.prevent="submit">
+          <div class="field">
+            <label for="cloud">Cloud provider</label>
+            <select id="cloud" v-model="form.cloud">
+              <option value="aws">AWS</option>
+            </select>
+          </div>
+
+          <div class="field">
+            <label for="project_name">Nom du projet</label>
+            <input
+              id="project_name"
+              type="text"
+              v-model.trim="form.project_name"
+              placeholder="my-landing-zone"
+              maxlength="63"
+              required
+            />
+            <p v-if="projectNameError" class="field-error">{{ projectNameError }}</p>
+            <p v-else class="field-hint">Lettres, chiffres, "-" et "_" uniquement.</p>
+          </div>
+
+          <div class="field">
+            <label for="region">Région AWS</label>
+            <input
+              id="region"
+              type="text"
+              v-model.trim="form.region"
+              placeholder="eu-west-1"
+              required
+            />
+          </div>
+
+          <div class="field">
+            <label>Dimensionnement réseau</label>
+            <div class="row-3">
+              <div>
+                <label for="az">AZ</label>
+                <input id="az" type="number" min="1" max="10" v-model.number="form.availability_zones" />
+              </div>
+              <div>
+                <label for="pub">Subnets publics</label>
+                <input id="pub" type="number" min="1" max="10" v-model.number="form.public_subnets" />
+              </div>
+              <div>
+                <label for="priv">Subnets privés</label>
+                <input id="priv" type="number" min="1" max="10" v-model.number="form.private_subnets" />
+              </div>
+            </div>
+            <p class="field-hint">Valeurs entre 1 et 10.</p>
+          </div>
+
+          <div class="field">
+            <label>Options</label>
+            <div class="toggles">
+              <label class="toggle">
+                <input type="checkbox" v-model="form.enable_nat_gateway" />
+                NAT Gateway
+              </label>
+              <label class="toggle">
+                <input type="checkbox" v-model="form.enable_cloudtrail" />
+                CloudTrail
+              </label>
+              <label class="toggle">
+                <input type="checkbox" v-model="form.enable_cloudwatch" />
+                CloudWatch
+              </label>
+              <label class="toggle">
+                <input type="checkbox" v-model="form.enable_s3_logs" />
+                Logs S3
+              </label>
+            </div>
+          </div>
+
+          <button class="submit" type="submit" :disabled="!isFormValid || status === 'loading'">
+            <span v-if="status === 'loading'"><span class="spinner"></span>Génération en cours…</span>
+            <span v-else>Générer la Landing Zone</span>
+          </button>
+        </form>
+      </section>
+
+      <section class="panel">
+        <h2>Résultat</h2>
+
+        <div v-if="status === 'idle'" class="results-empty">
+          Remplis le formulaire et lance une génération pour voir le résultat ici.
+        </div>
+
+        <div v-else-if="status === 'loading'" class="loading-block">
+          <div class="spinner"></div>
+          <p>Appel du modèle IA puis validation Terraform (init + validate)… cela peut prendre jusqu'à une minute.</p>
+        </div>
+
+        <div v-else-if="status === 'error'">
+          <div class="status-banner error">✕ Échec de la génération</div>
+          <p>{{ errorMessage }}</p>
+        </div>
+
+        <div v-else-if="status === 'success' && result">
+          <div class="status-banner ok">✓ Projet généré : {{ result.project }}</div>
+
+          <ul class="file-list">
+            <li v-for="file in result.generated_files" :key="file">{{ file }}</li>
+          </ul>
+
+          <div class="validation-block">
+            <h3>Validation Terraform ({{ result.validation.step }})</h3>
+            <div :class="['status-banner', result.validation.valid ? 'ok' : 'error']">
+              {{ result.validation.valid ? '✓ terraform validate: OK' : '✕ terraform validate: échec' }}
+            </div>
+            <pre v-if="result.validation.stdout" class="log">{{ result.validation.stdout }}</pre>
+            <pre v-if="result.validation.stderr" class="log">{{ result.validation.stderr }}</pre>
+          </div>
+
+          <a class="download-link" :href="downloadUrl()" download>Télécharger le .zip</a>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
