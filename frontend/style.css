@@ -8,6 +8,7 @@
   --accent-hover: #7c4ff0;
   --ok: #22c55e;
   --error: #ef4444;
+  --warning: #f59e0b;
   --input-bg: #0f1115;
   --radius: 10px;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
@@ -219,6 +220,18 @@ button.submit:disabled {
   background: rgba(239, 68, 68, 0.12);
   color: var(--error);
   border: 1px solid rgba(239, 68, 68, 0.35);
+}
+
+.status-banner.warning {
+  background: rgba(245, 158, 11, 0.12);
+  color: var(--warning);
+  border: 1px solid rgba(245, 158, 11, 0.35);
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+.status-banner.warning p {
+  margin: 0;
 }
 
 .file-list {

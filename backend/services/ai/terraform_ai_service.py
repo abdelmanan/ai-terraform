@@ -78,15 +78,6 @@ class TerraformAIService:
 
         choice = response.choices[0]
 
-        if choice.finish_reason == "length":
-            raise ApiException(
-                message=(
-                    "The AI service (Groq) response was truncated because it hit "
-                    "the token limit. Try a smaller project or simplify the request."
-                ),
-                status_code=502
-            )
-
         content = choice.message.content
 
         if not content or not content.strip():

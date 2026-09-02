@@ -79,28 +79,17 @@ class TerraformParser:
                 status_code=502
             )
 
-        # Check required files
-        missing_files = self.REQUIRED_FILES - set(files.keys())
-
-        if missing_files:
-
-            raise ApiException(
-                message=(
-                    "The AI response is missing required files: "
-                    + ", ".join(sorted(missing_files))
-                ),
-                status_code=502
-            )
-
         return files
+
+    def missing_required_files(self, files):
+        return sorted(self.REQUIRED_FILES - set(files.keys()))
 
     def _save_file(self, files, filename, content):
 
         if not filename:
-            raise ApiException(
-                message="Invalid filename detected in AI response.",
-                status_code=502
-            )
+            # Can't use an unnamed file; skip it rather than discarding
+            # everything else that was successfully parsed.
+            return
 
         content_text = "\n".join(content).strip()
 
@@ -110,10 +99,9 @@ class TerraformParser:
         )
 
         if not cleaned_content:
-            raise ApiException(
-                message=f"File '{filename}' is empty.",
-                status_code=502
-            )
+            # AI produced an empty file (e.g. truncated response); skip it
+            # rather than failing the whole batch.
+            return
 
         files[filename] = cleaned_content
 

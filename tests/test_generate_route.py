@@ -22,7 +22,14 @@ def stub_pipeline(monkeypatch):
     monkeypatch.setattr(
         generate_module.parser,
         "parse",
-        lambda response: {"main.tf": "resource \"aws_vpc\" \"main\" {}"}
+        lambda response: {
+            "provider.tf": "provider \"aws\" {}",
+            "main.tf": "resource \"aws_vpc\" \"main\" {}",
+            "variables.tf": "variable \"region\" {}",
+            "outputs.tf": "output \"vpc_id\" { value = aws_vpc.main.id }",
+            "terraform.tfvars": "region = \"eu-west-1\"",
+            "README.md": "# Landing Zone",
+        }
     )
     monkeypatch.setattr(
         generate_module.terraform_service,
@@ -46,9 +53,53 @@ def test_generate_success(valid_generate_payload):
     body = response.json()
     assert body["status"] == "success"
     assert body["project"] == valid_generate_payload["project_name"]
-    assert body["generated_files"] == ["main.tf"]
+    assert set(body["generated_files"]) == {
+        "provider.tf", "main.tf", "variables.tf", "outputs.tf",
+        "terraform.tfvars", "README.md",
+    }
+    assert body["warnings"] == []
     assert body["validation"]["valid"] is True
     assert body["download"] == f"/api/download/{valid_generate_payload['project_name']}"
+
+
+def test_generate_reports_warnings_when_files_missing_but_still_succeeds(
+    monkeypatch, valid_generate_payload
+):
+    monkeypatch.setattr(
+        generate_module.parser,
+        "parse",
+        lambda response: {
+            "provider.tf": "provider \"aws\" {}",
+            "main.tf": "resource \"aws_vpc\" \"main\" {}",
+        }
+    )
+
+    response = client.post("/api/generate", json=valid_generate_payload)
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "success"
+    assert set(body["generated_files"]) == {"provider.tf", "main.tf"}
+    assert any("missing" in w.lower() for w in body["warnings"])
+    assert body["download"] == f"/api/download/{valid_generate_payload['project_name']}"
+
+
+def test_generate_skips_validation_when_main_files_missing(
+    monkeypatch, valid_generate_payload
+):
+    monkeypatch.setattr(
+        generate_module.parser,
+        "parse",
+        lambda response: {"README.md": "# only a readme"}
+    )
+
+    response = client.post("/api/generate", json=valid_generate_payload)
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "success"
+    assert body["validation"]["valid"] is False
+    assert body["validation"]["step"] == "skipped"
 
 
 def test_generate_reports_terraform_validation_failure(monkeypatch, valid_generate_payload):

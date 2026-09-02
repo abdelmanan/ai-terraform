@@ -73,18 +73,16 @@ def test_generate_no_choices_raises(monkeypatch, service):
     assert exc_info.value.status_code == 502
 
 
-def test_generate_truncated_response_raises(monkeypatch, service):
+def test_generate_truncated_response_returns_partial_content(monkeypatch, service):
     monkeypatch.setattr(
         service.client.chat.completions,
         "create",
         lambda **kwargs: _completion("### provider.tf\npartial...", finish_reason="length")
     )
 
-    with pytest.raises(ApiException) as exc_info:
-        service.generate("prompt")
+    result = service.generate("prompt")
 
-    assert exc_info.value.status_code == 502
-    assert "truncated" in exc_info.value.message.lower()
+    assert result == "### provider.tf\npartial..."
 
 
 def test_generate_timeout_maps_to_504(monkeypatch, service, fake_openai_request):

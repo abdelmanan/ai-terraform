@@ -41,7 +41,7 @@ def test_parse_unrecognized_format_raises(parser):
     assert "no file markers" in exc_info.value.message.lower()
 
 
-def test_parse_missing_required_files_raises(parser):
+def test_parse_missing_required_files_are_omitted_not_raised(parser):
     response = (
         "### provider.tf\n"
         "BEGIN_TERRAFORM\n"
@@ -53,16 +53,15 @@ def test_parse_missing_required_files_raises(parser):
         "END_TERRAFORM\n"
     )
 
-    with pytest.raises(ApiException) as exc_info:
-        parser.parse(response)
+    files = parser.parse(response)
 
-    assert exc_info.value.status_code == 502
-    assert "missing required files" in exc_info.value.message.lower()
-    for missing in ("outputs.tf", "variables.tf", "terraform.tfvars", "README.md"):
-        assert missing in exc_info.value.message
+    assert set(files.keys()) == {"provider.tf", "main.tf"}
+    assert parser.missing_required_files(files) == sorted(
+        ["outputs.tf", "variables.tf", "terraform.tfvars", "README.md"]
+    )
 
 
-def test_parse_file_with_empty_content_raises(parser):
+def test_parse_file_with_empty_content_is_skipped(parser):
     response = (
         "### provider.tf\n"
         "BEGIN_TERRAFORM\n"
@@ -75,11 +74,11 @@ def test_parse_file_with_empty_content_raises(parser):
         "### README.md\nBEGIN_TEXT\nx\nEND_TEXT\n"
     )
 
-    with pytest.raises(ApiException) as exc_info:
-        parser.parse(response)
+    files = parser.parse(response)
 
-    assert "provider.tf" in exc_info.value.message
-    assert "empty" in exc_info.value.message.lower()
+    assert "provider.tf" not in files
+    assert files["main.tf"] == 'resource "aws_vpc" "main" {}'
+    assert parser.missing_required_files(files) == ["provider.tf"]
 
 
 def test_readme_begin_end_text_markers_are_stripped(parser, valid_ai_response):

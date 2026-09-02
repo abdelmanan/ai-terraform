@@ -30,12 +30,28 @@ def generate(request: GenerateRequest):
 
     files = parser.parse(ai_response)
 
+    warnings = []
+    missing_files = parser.missing_required_files(files)
+    if missing_files:
+        warnings.append(
+            "The AI response was missing some expected files: "
+            + ", ".join(missing_files)
+        )
+
     project_path = terraform_service.save(
         request.project_name,
         files
     )
 
-    validation = validator.validate(project_path)
+    if {"provider.tf", "main.tf"} & set(missing_files):
+        validation = {
+            "valid": False,
+            "step": "skipped",
+            "stdout": "",
+            "stderr": "Validation skipped: provider.tf or main.tf is missing."
+        }
+    else:
+        validation = validator.validate(project_path)
 
     zip_path = create_zip(project_path)
 
@@ -43,6 +59,7 @@ def generate(request: GenerateRequest):
         "status": "success",
         "project": request.project_name,
         "generated_files": list(files.keys()),
+        "warnings": warnings,
         "validation": validation,
         "download": f"/api/download/{request.project_name}"
     }

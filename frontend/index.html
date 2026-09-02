@@ -117,6 +117,10 @@
         <div v-else-if="status === 'success' && result">
           <div class="status-banner ok">✓ Projet généré : {{ result.project }}</div>
 
+          <div v-if="result.warnings && result.warnings.length" class="status-banner warning">
+            <p v-for="warning in result.warnings" :key="warning">⚠ {{ warning }}</p>
+          </div>
+
           <ul class="file-list">
             <li v-for="file in result.generated_files" :key="file">{{ file }}</li>
           </ul>
