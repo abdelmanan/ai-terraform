@@ -59,7 +59,9 @@ class TerraformParser:
 
             else:
 
-                current_content.append(line)
+                # Keep the raw line: stripping here would flatten the
+                # indentation of every generated Terraform / Markdown file.
+                current_content.append(raw_line)
 
         # Save last file
         if current_file:

@@ -114,3 +114,75 @@ def test_markdown_heading_inside_readme_does_not_break_parsing(parser):
     assert set(files.keys()) == TerraformParser.REQUIRED_FILES
     assert "### Usage" in files["README.md"]
     assert "Run terraform init." in files["README.md"]
+
+
+def test_parse_preserves_terraform_indentation(parser):
+    response = (
+        "### main.tf\n"
+        "BEGIN_TERRAFORM\n"
+        'resource "aws_vpc" "main" {\n'
+        "  cidr_block = var.vpc_cidr\n"
+        "\n"
+        "  tags = {\n"
+        "    Name = var.project_name\n"
+        "  }\n"
+        "}\n"
+        "END_TERRAFORM\n"
+    )
+
+    files = parser.parse(response)
+
+    assert files["main.tf"] == (
+        'resource "aws_vpc" "main" {\n'
+        "  cidr_block = var.vpc_cidr\n"
+        "\n"
+        "  tags = {\n"
+        "    Name = var.project_name\n"
+        "  }\n"
+        "}"
+    )
+
+
+def test_parse_preserves_indentation_inside_readme(parser):
+    response = (
+        "### README.md\n"
+        "BEGIN_TEXT\n"
+        "# Landing Zone\n"
+        "\n"
+        "1. Initialise:\n"
+        "   - `terraform init`\n"
+        "   - `terraform validate`\n"
+        "\n"
+        "```hcl\n"
+        'module "vpc" {\n'
+        '  source = "./modules/vpc"\n'
+        "}\n"
+        "```\n"
+        "END_TEXT\n"
+    )
+
+    files = parser.parse(response)
+
+    assert "   - `terraform init`" in files["README.md"]
+    assert '  source = "./modules/vpc"' in files["README.md"]
+
+
+def test_parse_still_strips_markers_when_they_are_indented(parser):
+    response = (
+        "### main.tf\n"
+        "  BEGIN_TERRAFORM  \n"
+        'resource "aws_vpc" "main" {\n'
+        "  cidr_block = var.vpc_cidr\n"
+        "}\n"
+        "  END_TERRAFORM  \n"
+    )
+
+    files = parser.parse(response)
+
+    assert "BEGIN_TERRAFORM" not in files["main.tf"]
+    assert "END_TERRAFORM" not in files["main.tf"]
+    assert files["main.tf"] == (
+        'resource "aws_vpc" "main" {\n'
+        "  cidr_block = var.vpc_cidr\n"
+        "}"
+    )
