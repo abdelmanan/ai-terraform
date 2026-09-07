@@ -90,6 +90,32 @@ AWS PROVIDER COMPATIBILITY RULES:
 
 All generated resources must be compatible with the current stable AWS Terraform provider.
 
+PROVIDER DECLARATION RULES (CRITICAL):
+
+- Every provider used anywhere in the code MUST be declared in the
+  `required_providers` block of provider.tf, not only the aws provider.
+- If you use any `random_*` resource (for example `random_id` to build a unique
+  S3 bucket name), you MUST declare it:
+  random = {{
+    source  = "hashicorp/random"
+    version = "~> 3.0"
+  }}
+- The same rule applies to every other provider you might use (tls, local, null,
+  archive, ...).
+- Before finalizing the output, list every resource type prefix you used
+  (aws_, random_, ...) and confirm each one has a matching entry in
+  required_providers. This is a mandatory self-check.
+
+DATA SOURCE RULES (CRITICAL):
+
+- Every `data` block referenced anywhere in the code (e.g. `data.aws_availability_zones.available`) MUST be explicitly declared in main.tf.
+- Never reference a `data.<type>.<name>` attribute without first declaring the matching `data "<type>" "<name>" { ... }` block in the same project.
+- If you use `data.aws_availability_zones.available.names[count.index]` to distribute resources across Availability Zones, you MUST declare:
+  data "aws_availability_zones" "available" {{
+    state = "available"
+  }}
+- Before finalizing the output, double-check that every `data.` reference in main.tf has a corresponding declared `data` block. This is a mandatory self-check.
+
 The generated project must be able to pass:
 
 terraform fmt
