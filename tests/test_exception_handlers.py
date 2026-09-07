@@ -45,7 +45,19 @@ def test_generic_exception_is_formatted():
     body = response.json()
     assert body["status"] == "error"
     assert body["message"] == "Internal Server Error"
-    assert "unexpected failure" in body["details"]
+
+
+def test_generic_exception_does_not_leak_internals(caplog):
+    # str(exc) used to be returned to the client, exposing server paths and
+    # internal state to anyone able to trigger a 500.
+    response = client.get("/boom-generic")
+
+    body = response.json()
+    assert "details" not in body
+    assert "unexpected failure" not in response.text
+
+    # ... but it must still be recoverable from the logs.
+    assert "unexpected failure" in caplog.text
 
 
 def test_validation_error_is_formatted():

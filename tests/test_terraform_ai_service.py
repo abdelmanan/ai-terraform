@@ -3,6 +3,7 @@ from types import SimpleNamespace
 import openai
 import pytest
 
+from backend.config import settings
 from backend.exceptions.api_exception import ApiException
 from backend.services.ai.terraform_ai_service import TerraformAIService
 
@@ -156,3 +157,11 @@ def test_generate_generic_status_error_maps_to_502(monkeypatch, service, fake_op
 
     assert exc_info.value.status_code == 502
     assert "model not found" in exc_info.value.message
+
+
+def test_client_is_configured_with_a_bounded_timeout(service):
+    # The SDK default is 600s: our APITimeoutError handler was unreachable and
+    # a hanging call would pin a worker for 10 minutes.
+    assert service.client.timeout == settings.AI_TIMEOUT_SECONDS
+    assert service.client.timeout < 600
+    assert service.client.max_retries == settings.AI_MAX_RETRIES

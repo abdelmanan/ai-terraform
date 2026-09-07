@@ -1,9 +1,17 @@
+import logging
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from backend.config import settings
 from backend.routes.generate import router as generate_router
 from backend.exceptions.exception_handler import register_exception_handlers
+
+logging.basicConfig(
+    level=settings.LOG_LEVEL,
+    format="%(asctime)s %(levelname)-8s %(name)s | %(message)s",
+    datefmt="%Y-%m-%dT%H:%M:%S"
+)
 
 app = FastAPI(
     title="AI Terraform Landing Zone Generator",
