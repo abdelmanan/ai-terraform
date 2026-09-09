@@ -126,9 +126,9 @@
           </ul>
 
           <div class="validation-block">
-            <h3>Validation Terraform ({{ result.validation.step }})</h3>
+            <h3>Validation Terraform</h3>
             <div :class="['status-banner', result.validation.valid ? 'ok' : 'error']">
-              {{ result.validation.valid ? '✓ terraform validate: OK' : '✕ terraform validate: échec' }}
+              {{ validationLabel() }}
             </div>
             <pre v-if="result.validation.stdout" class="log">{{ result.validation.stdout }}</pre>
             <pre v-if="result.validation.stderr" class="log">{{ result.validation.stderr }}</pre>

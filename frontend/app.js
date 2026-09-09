@@ -36,6 +36,16 @@ createApp({
       );
     });
 
+    // The banner said "terraform validate: échec" whatever the step, so an
+    // init timeout — which says nothing about the generated HCL — read as
+    // broken code. The backend already reports where it stopped.
+    const VALIDATION_LABELS = {
+      validate: "✕ terraform validate : le code généré contient des erreurs",
+      init: "✕ terraform init : la préparation du projet a échoué, le code n'a pas été vérifié",
+      error: "✕ Terraform n'a pas pu être exécuté, le code n'a pas été vérifié",
+      skipped: "✕ Validation ignorée : des fichiers essentiels sont manquants",
+    };
+
     const status = ref("idle"); // idle | loading | success | error
     const errorMessage = ref("");
     const result = ref(null);
@@ -71,6 +81,16 @@ createApp({
       }
     }
 
+    function validationLabel() {
+      if (!result.value) return "";
+
+      const validation = result.value.validation;
+
+      if (validation.valid) return "✓ terraform validate : OK";
+
+      return VALIDATION_LABELS[validation.step] || VALIDATION_LABELS.error;
+    }
+
     function downloadUrl() {
       if (!result.value) return "#";
       return `${API_BASE}${result.value.download}`;
@@ -83,6 +103,7 @@ createApp({
       status,
       errorMessage,
       result,
+      validationLabel,
       submit,
       downloadUrl,
     };
