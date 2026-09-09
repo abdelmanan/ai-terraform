@@ -274,6 +274,73 @@ pre.log {
   overflow-y: auto;
 }
 
+.loading-block .elapsed {
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  color: var(--text);
+  margin: 0 0 6px;
+}
+
+.hint {
+  color: var(--text-dim);
+  font-size: 0.82rem;
+  line-height: 1.5;
+}
+
+/* The readable rendering of terraform's errors. The raw output stays available
+   below, folded: it is the only place the exact wording can be checked. */
+.error-list {
+  list-style: none;
+  margin: 0 0 14px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.error-list li {
+  background: rgba(239, 68, 68, 0.07);
+  border-left: 3px solid var(--error);
+  border-radius: 0 8px 8px 0;
+  padding: 10px 14px;
+}
+
+.error-list p {
+  margin: 0;
+}
+
+.error-title {
+  font-weight: 700;
+  font-size: 0.88rem;
+  color: var(--text);
+}
+
+.error-location {
+  margin-top: 4px !important;
+  font-family: "SF Mono", Menlo, Consolas, monospace;
+  font-size: 0.76rem;
+  color: var(--error);
+}
+
+.error-detail {
+  margin-top: 6px !important;
+  font-size: 0.84rem;
+  line-height: 1.5;
+  color: var(--text-dim);
+}
+
+.raw-log summary {
+  cursor: pointer;
+  font-size: 0.8rem;
+  color: var(--text-dim);
+  padding: 6px 0;
+  user-select: none;
+}
+
+.raw-log summary:hover {
+  color: var(--text);
+}
+
 .download-link {
   display: inline-block;
   margin-top: 16px;

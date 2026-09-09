@@ -106,19 +106,22 @@
 
         <div v-else-if="status === 'loading'" class="loading-block">
           <div class="spinner"></div>
-          <p>Appel du modèle IA puis validation Terraform (init + validate)… cela peut prendre jusqu'à une minute.</p>
+          <p class="elapsed">{{ elapsedSeconds }} s écoulées</p>
+          <p>{{ loadingHint }}</p>
+          <p class="hint">Une génération avec réparation automatique peut prendre plusieurs minutes. Ne recharge pas la page.</p>
         </div>
 
         <div v-else-if="status === 'error'">
           <div class="status-banner error">✕ Échec de la génération</div>
           <p>{{ errorMessage }}</p>
+          <p class="hint">Aucun projet n'a été produit : rien n'est à télécharger. Relance la génération — si l'erreur persiste, consulte les logs du backend.</p>
         </div>
 
         <div v-else-if="status === 'success' && result">
           <div class="status-banner ok">✓ Projet généré : {{ result.project }}</div>
 
           <div v-if="result.warnings && result.warnings.length" class="status-banner warning">
-            <p v-for="warning in result.warnings" :key="warning">⚠ {{ warning }}</p>
+            <p v-for="warning in result.warnings" :key="warning">⚠ {{ warningLabel(warning) }}</p>
           </div>
 
           <ul class="file-list">
@@ -130,8 +133,19 @@
             <div :class="['status-banner', result.validation.valid ? 'ok' : 'error']">
               {{ validationLabel() }}
             </div>
-            <pre v-if="result.validation.stdout" class="log">{{ result.validation.stdout }}</pre>
-            <pre v-if="result.validation.stderr" class="log">{{ result.validation.stderr }}</pre>
+            <ul v-if="terraformErrors.length" class="error-list">
+              <li v-for="(error, index) in terraformErrors" :key="index">
+                <p class="error-title">{{ error.title }}</p>
+                <p v-if="error.location" class="error-location">{{ error.location }}</p>
+                <p v-if="error.detail" class="error-detail">{{ error.detail }}</p>
+              </li>
+            </ul>
+
+            <details v-if="result.validation.stdout || result.validation.stderr" class="raw-log">
+              <summary>Sortie brute de Terraform</summary>
+              <pre v-if="result.validation.stdout" class="log">{{ result.validation.stdout }}</pre>
+              <pre v-if="result.validation.stderr" class="log">{{ result.validation.stderr }}</pre>
+            </details>
           </div>
 
           <a class="download-link" :href="downloadUrl()" download>Télécharger le .zip</a>

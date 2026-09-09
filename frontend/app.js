@@ -46,9 +46,116 @@ createApp({
       skipped: "✕ Validation ignorée : des fichiers essentiels sont manquants",
     };
 
+    // The API answers in English, as an API should. Translating belongs here,
+    // in the layer that owns the user's language. Anything unknown is shown
+    // verbatim rather than swallowed: an untranslated warning still beats a
+    // missing one.
+    const WARNING_LABELS = [
+      [/missing some expected files: (.+)$/,
+        (m) => `Le modèle n'a pas produit tous les fichiers attendus : ${m[1]}`],
+      [/cut off at the (\d+) token limit/,
+        (m) => `La réponse du modèle a été coupée à la limite de ${m[1]} tokens : les fichiers générés sont probablement incomplets.`],
+      [/^Self-repair attempt (\d+) failed: (.+)$/,
+        (m) => `La tentative de réparation ${m[1]} n'a pas pu aboutir : ${m[2]}`],
+      [/made the project worse/,
+        () => "Une réparation a dégradé le projet : la meilleure version produite a été conservée."],
+      [/(\d+) self-repair attempt\(s\) fixed the project/,
+        (m) => `Le code généré était invalide ; ${m[1]} réparation(s) automatique(s) l'ont corrigé.`],
+      [/(\d+) self-repair attempt\(s\) did not fix it/,
+        (m) => `Le code généré était invalide ; ${m[1]} réparation(s) automatique(s) n'ont pas suffi. Les erreurs restantes sont détaillées ci-dessous.`],
+      [/could not be archived for download: (.+)$/,
+        (m) => `Le projet n'a pas pu être archivé pour le téléchargement : ${m[1]}. Les fichiers restent sur le serveur.`],
+    ];
+
+    function warningLabel(warning) {
+      for (const [pattern, format] of WARNING_LABELS) {
+        const match = warning.match(pattern);
+        if (match) return format(match);
+      }
+      return warning;
+    }
+
+    // Terraform frames its errors in box-drawing characters, which `-no-color`
+    // does not remove. Dumped raw, one "Unsupported argument" hid inside forty
+    // lines of │ and ╵ and nobody read it.
+    function parseTerraformErrors(stderr) {
+      if (!stderr) return [];
+
+      const errors = [];
+      let current = null;
+
+      for (const rawLine of stderr.split("\n")) {
+        let line = rawLine.trim();
+
+        if (line === "\u2577" || line === "\u2575") continue;
+        if (line.startsWith("\u2502")) line = line.slice(1).trim();
+
+        if (line.startsWith("Error:")) {
+          if (current) errors.push(current);
+          current = { title: line.slice(6).trim(), location: "", detail: [] };
+          continue;
+        }
+
+        if (!current) continue;
+
+        const at = line.match(/^on (.+?) line (\d+)(?:, in (.+))?:$/);
+        if (at) {
+          current.location = at[3]
+            ? `${at[1]}, ligne ${at[2]} — ${at[3]}`
+            : `${at[1]}, ligne ${at[2]}`;
+          continue;
+        }
+
+        // The echoed source line ("12:   vpc = true") is already covered by
+        // the location, and blank lines are only box padding.
+        if (line === "" || /^\d+:/.test(line)) continue;
+
+        current.detail.push(line);
+      }
+
+      if (current) errors.push(current);
+
+      return errors.map((error) => ({
+        title: error.title,
+        location: error.location,
+        detail: error.detail.join(" "),
+      }));
+    }
+
     const status = ref("idle"); // idle | loading | success | error
     const errorMessage = ref("");
     const result = ref(null);
+
+    // A run can take several minutes: three model calls and three
+    // init/validate cycles when both repairs fire. With a bare spinner and no
+    // elapsed time, a working generation looks frozen and gets reloaded away.
+    const elapsedSeconds = ref(0);
+    let elapsedTimer = null;
+
+    const loadingHint = computed(() => {
+      if (elapsedSeconds.value < 45) {
+        return "Appel du modèle IA, puis validation Terraform (init + validate).";
+      }
+      if (elapsedSeconds.value < 120) {
+        return "Validation Terraform en cours — le téléchargement des providers peut être long au premier lancement.";
+      }
+      return "Le code généré était probablement invalide : une réparation automatique est en cours. C'est normal, laisse tourner.";
+    });
+
+    function startTimer() {
+      elapsedSeconds.value = 0;
+      elapsedTimer = setInterval(() => { elapsedSeconds.value += 1; }, 1000);
+    }
+
+    function stopTimer() {
+      clearInterval(elapsedTimer);
+      elapsedTimer = null;
+    }
+
+    const terraformErrors = computed(() => {
+      if (!result.value) return [];
+      return parseTerraformErrors(result.value.validation.stderr);
+    });
 
     async function submit() {
       if (!isFormValid.value || status.value === "loading") return;
@@ -56,6 +163,7 @@ createApp({
       status.value = "loading";
       errorMessage.value = "";
       result.value = null;
+      startTimer();
 
       try {
         const response = await fetch(`${API_BASE}/api/generate`, {
@@ -78,6 +186,8 @@ createApp({
         errorMessage.value =
           "Impossible de contacter le serveur (" + err.message + "). Vérifie que le backend tourne sur " + API_BASE + ".";
         status.value = "error";
+      } finally {
+        stopTimer();
       }
     }
 
@@ -103,7 +213,11 @@ createApp({
       status,
       errorMessage,
       result,
+      elapsedSeconds,
+      loadingHint,
+      terraformErrors,
       validationLabel,
+      warningLabel,
       submit,
       downloadUrl,
     };
