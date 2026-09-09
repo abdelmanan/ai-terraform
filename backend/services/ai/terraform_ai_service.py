@@ -27,7 +27,12 @@ class TerraformAIService:
             max_retries=settings.AI_MAX_RETRIES
         )
 
-    def generate(self, prompt: str):
+    def generate(self, prompt: str, warnings=None):
+        """Call the model and return its raw answer.
+
+        `warnings` collects problems the user must see but that do not justify
+        throwing the generation away: they travel up to the API response.
+        """
 
         started_at = time.monotonic()
 
@@ -99,6 +104,18 @@ class TerraformAIService:
                 "Groq hit the %d token ceiling: the answer is truncated",
                 settings.AI_MAX_TOKENS
             )
+
+            # Logging this was not enough: the truncated files are still parsed
+            # and shipped, so the only person who could act on it — the user
+            # looking at a main.tf that stops mid-resource — never heard about
+            # it. Terraform usually catches it, but not always: a cut in the
+            # README or in an unreferenced output validates perfectly.
+            if warnings is not None:
+                warnings.append(
+                    "The AI answer was cut off at the "
+                    f"{settings.AI_MAX_TOKENS} token limit: the generated files "
+                    "are likely incomplete."
+                )
 
         content = choice.message.content
 

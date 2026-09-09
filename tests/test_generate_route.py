@@ -18,7 +18,9 @@ def stub_pipeline(monkeypatch):
         generate_module.prompt_service, "build_prompt", lambda request: "a prompt"
     )
     monkeypatch.setattr(
-        generate_module.ai_service, "generate", lambda prompt: "raw ai response"
+        generate_module.ai_service,
+        "generate",
+        lambda prompt, warnings=None: "raw ai response"
     )
     monkeypatch.setattr(
         generate_module.parser,
@@ -61,6 +63,21 @@ def test_generate_success(valid_generate_payload):
     assert body["warnings"] == []
     assert body["validation"]["valid"] is True
     assert body["download"] == f"/api/download/{valid_generate_payload['project_name']}"
+
+
+def test_a_truncated_ai_answer_reaches_the_api_response(monkeypatch, valid_generate_payload):
+    # The AI service reports truncation through the warnings list; this checks
+    # the whole path up to the JSON the browser displays.
+    def truncating_generate(prompt, warnings=None):
+        warnings.append("The AI answer was cut off at the 12000 token limit.")
+        return "raw ai response"
+
+    monkeypatch.setattr(generate_module.ai_service, "generate", truncating_generate)
+
+    response = client.post("/api/generate", json=valid_generate_payload)
+
+    assert response.status_code == 200
+    assert any("cut off" in w for w in response.json()["warnings"])
 
 
 def test_generate_reports_warnings_when_files_missing_but_still_succeeds(
@@ -119,7 +136,7 @@ def test_generate_reports_terraform_validation_failure(monkeypatch, valid_genera
 
 
 def test_generate_propagates_ai_service_failure(monkeypatch, valid_generate_payload):
-    def raise_ai_error(prompt):
+    def raise_ai_error(prompt, warnings=None):
         raise ApiException(message="Groq is down", status_code=502)
 
     monkeypatch.setattr(generate_module.ai_service, "generate", raise_ai_error)
@@ -223,7 +240,7 @@ FIXED = {"valid": True, "step": "validate", "stdout": "Success!", "stderr": ""}
 def _count_ai_calls(monkeypatch):
     prompts = []
 
-    def fake_generate(prompt):
+    def fake_generate(prompt, warnings=None):
         prompts.append(prompt)
         return "raw ai response"
 
@@ -325,7 +342,7 @@ def test_failing_repair_call_still_returns_the_project(monkeypatch, valid_genera
 
     calls = {"n": 0}
 
-    def flaky_generate(prompt):
+    def flaky_generate(prompt, warnings=None):
         calls["n"] += 1
         if calls["n"] > 1:
             raise ApiException(message="Groq rate limit", status_code=429)

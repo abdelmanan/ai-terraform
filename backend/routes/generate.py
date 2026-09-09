@@ -97,11 +97,14 @@ def generate(request: GenerateRequest):
 
     prompt = prompt_service.build_prompt(request)
 
-    ai_response = ai_service.generate(prompt)
+    # Declared before the first call: the AI service reports a truncated answer
+    # through it, and that has to reach the user, not just the log.
+    warnings = []
+
+    ai_response = ai_service.generate(prompt, warnings=warnings)
 
     files = parser.parse(ai_response)
 
-    warnings = []
     missing_files = parser.missing_required_files(files)
     if missing_files:
         warnings.append(
@@ -150,7 +153,9 @@ def generate(request: GenerateRequest):
                 validation,
                 full_rewrite=full_rewrite
             )
-            repaired_files = parser.parse(ai_service.generate(repair_prompt))
+            repaired_files = parser.parse(
+                ai_service.generate(repair_prompt, warnings=warnings)
+            )
 
         except ApiException as exc:
             # A failed repair must not lose the project already on disk: keep

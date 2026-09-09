@@ -86,6 +86,37 @@ def test_generate_truncated_response_returns_partial_content(monkeypatch, servic
     assert result == "### provider.tf\npartial..."
 
 
+def test_generate_truncated_response_warns_the_caller(monkeypatch, service):
+    # Logging it was not enough: the user downloaded a half-written main.tf
+    # without ever being told the answer had been cut off.
+    monkeypatch.setattr(
+        service.client.chat.completions,
+        "create",
+        lambda **kwargs: _completion("### provider.tf\npartial...", finish_reason="length")
+    )
+
+    warnings = []
+
+    service.generate("prompt", warnings=warnings)
+
+    assert len(warnings) == 1
+    assert "cut off" in warnings[0]
+
+
+def test_generate_complete_response_warns_nothing(monkeypatch, service):
+    monkeypatch.setattr(
+        service.client.chat.completions,
+        "create",
+        lambda **kwargs: _completion("### provider.tf\ncomplete", finish_reason="stop")
+    )
+
+    warnings = []
+
+    service.generate("prompt", warnings=warnings)
+
+    assert warnings == []
+
+
 def test_generate_timeout_maps_to_504(monkeypatch, service, fake_openai_request):
     def raise_timeout(**kwargs):
         raise openai.APITimeoutError(request=fake_openai_request)

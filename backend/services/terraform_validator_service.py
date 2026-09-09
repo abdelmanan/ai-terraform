@@ -19,9 +19,11 @@ class TerraformValidatorService:
 
     # `init` downloads and unpacks the provider; measured at ~57s even with a
     # warm plugin cache, so a 60s budget made a valid project fail at random.
-    INIT_TIMEOUT_SECONDS = 180
+    # The budget also has to cover a cold cache, where the pinned provider is a
+    # 675 MB download: slow is acceptable, giving up on a valid project is not.
+    INIT_TIMEOUT_SECONDS = 420
 
-    COMMAND_TIMEOUT_SECONDS = 60
+    COMMAND_TIMEOUT_SECONDS = 120
 
     def __init__(self):
         os.makedirs(settings.TERRAFORM_PLUGIN_CACHE_DIR, exist_ok=True)

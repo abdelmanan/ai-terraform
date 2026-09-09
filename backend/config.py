@@ -34,8 +34,12 @@ class Settings:
     MODEL = "openai/gpt-oss-120b"
 
     # The SDK defaults to 600s, which would pin a worker for 10 minutes on a
-    # hanging call and made our own APITimeoutError handler unreachable.
-    AI_TIMEOUT_SECONDS = 60.0
+    # hanging call and made our own APITimeoutError handler unreachable. But 60s
+    # was the opposite mistake: a full landing zone is a long completion, and
+    # cutting it off threw away the whole generation to save two minutes. We
+    # would rather answer slowly than not answer at all, so the budget is
+    # generous and merely bounded.
+    AI_TIMEOUT_SECONDS = 180.0
 
     AI_MAX_RETRIES = 2
 
