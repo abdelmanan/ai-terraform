@@ -131,6 +131,12 @@ Réponse `200` :
 Un projet qui reste invalide après réparation renvoie quand même `200` avec
 `validation.valid = false` : le projet est livré, à l'utilisateur de décider.
 
+**La requête est longue par choix** : jusqu'à trois appels au modèle et trois cycles
+`init`/`validate`, soit plusieurs minutes. Aucun client ne doit lui appliquer un timeout
+court. Tout ce qui a pu être produit est livré, et ce qui a mal tourné est signalé dans
+`warnings` plutôt que d'échouer la requête — y compris une réponse du modèle tronquée au
+plafond de tokens, que rien ne rendait visible auparavant.
+
 ### `GET /api/download/{project_name}`
 
 Renvoie l'archive `.zip` (sans `.terraform/` ni fichier de lock).
@@ -157,7 +163,7 @@ Format uniforme `{"status": "error", "message": "..."}`.
 | `CORS_ORIGINS` | `http://localhost:5173,http://localhost:3000` | origines autorisées (séparées par des virgules) |
 | `LOG_LEVEL` | `INFO` | niveau de log |
 
-Réglages dans `backend/config.py` : modèle, timeouts IA (60 s, 2 retries), répertoire de
+Réglages dans `backend/config.py` : modèle, timeout IA (180 s, 2 retries), répertoire de
 sortie, cache de providers Terraform.
 
 **Versions de providers** (`AWS_PROVIDER_VERSION`, `RANDOM_PROVIDER_VERSION`) : les prompts
@@ -166,8 +172,10 @@ registry résoudre vers une version absente du cache local, et le téléchargeme
 budget d'`init` sur un projet pourtant valide. Toute modification de ces valeurs doit être
 suivie d'un `terraform init` pour réamorcer le cache.
 
-Budgets de temps dans `TerraformValidatorService` : `init` **180 s** (mesuré à ~57 s même
-avec un cache chaud), autres commandes 60 s.
+Budgets de temps dans `TerraformValidatorService` : `init` **420 s**, autres commandes
+**120 s**. Ces budgets sont volontairement larges : `init` est mesuré à ~57 s avec un cache
+chaud, mais doit aussi couvrir un cache froid où le provider épinglé pèse 675 Mo. Le parti
+pris du projet est d'aboutir lentement plutôt que d'abandonner une génération valide.
 
 ---
 
