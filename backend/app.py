@@ -1,6 +1,6 @@
 import logging
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware
 
 from backend.config import settings
@@ -47,3 +47,8 @@ def health():
     return {
         "status": "healthy"
     }
+
+@app.get("/favicon.ico", include_in_schema=False)
+def favicon():
+    # Le navigateur la réclame à chaque chargement de page : évite un 404 dans les logs
+    return Response(status_code=204)
