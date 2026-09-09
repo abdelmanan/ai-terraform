@@ -47,6 +47,17 @@ class Settings:
 
     TERRAFORM_PLUGIN_CACHE_DIR = str(BASE_DIR / ".terraform-plugin-cache")
 
+    # Left free, the model picked a range like `~> 5.0` and the registry
+    # resolved it to whatever was newest that day. When that landed on a version
+    # the plugin cache did not hold, `terraform init` spent its whole 180s
+    # budget downloading a 675 MB provider and the generation failed on a valid
+    # project. Pinning keeps every init on the cached copy, well inside the
+    # budget. Bump these together with the cached versions, and warm the cache
+    # with one `terraform init` before relying on the new ones.
+    AWS_PROVIDER_VERSION = "5.100.0"
+
+    RANDOM_PROVIDER_VERSION = "3.9.0"
+
     CORS_ORIGINS = _parse_cors_origins(os.getenv("CORS_ORIGINS"))
 
 

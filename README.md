@@ -63,6 +63,10 @@ pip install -r requirements.txt
 echo "GROQ_API_KEY=gsk_..." > .env
 ```
 
+Le premier `terraform init` télécharge les providers pinnés (~700 Mo) dans
+`.terraform-plugin-cache/`, qui n'est pas versionné. Les générations suivantes réutilisent
+ce cache — c'est ce qui garde `init` sous son budget de temps.
+
 ## Lancement
 
 ```bash
@@ -82,7 +86,7 @@ cd frontend && python3 -m http.server 5173
 ## Tests
 
 ```bash
-pytest          # 99 tests, sans réseau ni Terraform (tout est simulé)
+pytest          # 114 tests, sans réseau ni Terraform (tout est simulé)
 ```
 
 ---
@@ -156,6 +160,12 @@ Format uniforme `{"status": "error", "message": "..."}`.
 Réglages dans `backend/config.py` : modèle, timeouts IA (60 s, 2 retries), répertoire de
 sortie, cache de providers Terraform.
 
+**Versions de providers** (`AWS_PROVIDER_VERSION`, `RANDOM_PROVIDER_VERSION`) : les prompts
+imposent au modèle ces versions exactes, jamais une plage `~>`. Une plage laissait le
+registry résoudre vers une version absente du cache local, et le téléchargement épuisait le
+budget d'`init` sur un projet pourtant valide. Toute modification de ces valeurs doit être
+suivie d'un `terraform init` pour réamorcer le cache.
+
 Budgets de temps dans `TerraformValidatorService` : `init` **180 s** (mesuré à ~57 s même
 avec un cache chaud), autres commandes 60 s.
 
@@ -176,6 +186,11 @@ Ce projet est une **démo fonctionnelle**, pas un service de production.
 - **`terraform validate` prouve que le code est valide, pas qu'il respecte les paramètres
   demandés.** Vérifier le nombre de subnets ou la présence de la NAT demanderait des
   assertions sur le `plan`.
+- **Le pin des versions de providers n'est qu'une consigne de prompt.** Rien ne vérifie
+  côté code ce que le modèle a réellement écrit dans `provider.tf` : s'il ignore la
+  consigne, le téléchargement d'une version non cachée peut à nouveau faire expirer
+  `init`. Une normalisation déterministe de `provider.tf` après le parse serait la vraie
+  garantie.
 - Seuls `cloud=aws` et `template=landing-zone` sont réellement implémentés.
 
 ## Pistes
@@ -199,5 +214,5 @@ backend/
   exceptions/            ApiException + handlers centralisés
   utils/zip_manager.py
 frontend/                Vue 3 via CDN, sans build
-tests/                   99 tests
+tests/                   114 tests
 ```

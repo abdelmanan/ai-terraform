@@ -1,3 +1,6 @@
+from backend.config import settings
+
+
 def build_landing_zone_prompt(request):
 
     return f"""
@@ -94,11 +97,19 @@ PROVIDER DECLARATION RULES (CRITICAL):
 
 - Every provider used anywhere in the code MUST be declared in the
   `required_providers` block of provider.tf, not only the aws provider.
+- Pin every provider to the EXACT version listed below. Never use a range
+  (`~>`, `>=`) and never substitute another version: only these versions are
+  available locally, any other one has to be downloaded and the generation
+  times out.
+  aws = {{
+    source  = "hashicorp/aws"
+    version = "{settings.AWS_PROVIDER_VERSION}"
+  }}
 - If you use any `random_*` resource (for example `random_id` to build a unique
   S3 bucket name), you MUST declare it:
   random = {{
     source  = "hashicorp/random"
-    version = "~> 3.0"
+    version = "{settings.RANDOM_PROVIDER_VERSION}"
   }}
 - The same rule applies to every other provider you might use (tls, local, null,
   archive, ...).

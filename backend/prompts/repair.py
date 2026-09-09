@@ -1,3 +1,5 @@
+from backend.config import settings
+
 TEXT_FILES = {"README.md": ("BEGIN_TEXT", "END_TEXT")}
 
 DEFAULT_MARKERS = ("BEGIN_TERRAFORM", "END_TERRAFORM")
@@ -115,6 +117,9 @@ YOUR TASK
 - Use arguments supported by the current stable AWS provider (for example
   `domain = "vpc"` on aws_eip, never the removed `vpc = true`).
 - Every `data.<type>.<name>` reference must have a matching declared data block.
+- Keep the provider versions pinned exactly as follows, never as a range:
+  hashicorp/aws = "{settings.AWS_PROVIDER_VERSION}",
+  hashicorp/random = "{settings.RANDOM_PROVIDER_VERSION}".
 
 =========================
 OUTPUT FORMAT
