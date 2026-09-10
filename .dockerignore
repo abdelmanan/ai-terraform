@@ -1,0 +1,33 @@
+# Tout ce qui n'a pas à entrer dans le contexte de build.
+# Sans ce fichier, .venv/ et .git/ sont envoyés au démon Docker à chaque build.
+
+.git/
+.gitignore
+
+# Environnement virtuel local : les dépendances sont réinstallées dans l'image,
+# et les binaires compilés pour l'hôte ne sont pas forcément valables dedans.
+.venv/
+
+# Secrets : ils sont injectés au runtime (--env-file), jamais copiés dans l'image.
+.env
+*.env
+
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Sorties d'exécution : c'est un volume, pas du contenu d'image.
+generated/
+.terraform/
+.terraform.lock.hcl
+.terraform-plugin-cache/
+*.tfstate
+*.tfstate.*
+
+tests/
+pytest.ini
+README.md
+run.sh
+Dockerfile*
+docker-compose*.yml
+.dockerignore
