@@ -1,0 +1,39 @@
+services:
+  backend:
+    build: .
+    image: ai-tf-landing-zone-backend
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env          # GROQ_API_KEY : injecté au runtime, jamais dans l'image
+    environment:
+      # nginx proxifie /api sur la même origine : le CORS ne sert plus qu'aux
+      # appels directs à http://localhost:8000 (Swagger, curl, ./run.sh).
+      CORS_ORIGINS: "http://localhost:5173"
+      # Laisse S3_BUCKET vide en local : les archives restent sur le disque et
+      # sont servies par /api/download. En prod, c'est ce qui bascule sur S3.
+      S3_BUCKET: "${S3_BUCKET:-}"
+      S3_PREFIX: "${S3_PREFIX:-generated}"
+      AWS_REGION: "${AWS_REGION:-}"
+    volumes:
+      # Les landing zones générées survivent au conteneur.
+      - generated:/app/generated
+      # Le cache de providers Terraform : sans lui, chaque `terraform init`
+      # retélécharge ~675 Mo et explose le budget de 420s.
+      - tf-plugin-cache:/app/.terraform-plugin-cache
+    restart: unless-stopped
+
+  frontend:
+    build: ./frontend
+    image: ai-tf-landing-zone-frontend
+    ports:
+      # 5173 côté hôte car app.js appelle le backend depuis le NAVIGATEUR
+      # (http://127.0.0.1:8000) et CORS_ORIGINS autorise cette origine.
+      - "5173:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  generated:
+  tf-plugin-cache:
