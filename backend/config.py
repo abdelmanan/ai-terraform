@@ -62,6 +62,21 @@ class Settings:
 
     RANDOM_PROVIDER_VERSION = "3.9.0"
 
+    # Sans bucket, les archives restent sur le disque local et sont servies par
+    # /api/download : c'est le mode développement (./run.sh) et celui des tests.
+    # Avec un bucket, le conteneur devient jetable — le lien de téléchargement
+    # ne dépend plus de l'instance qui a produit le fichier.
+    S3_BUCKET = os.getenv("S3_BUCKET")
+
+    S3_PREFIX = os.getenv("S3_PREFIX", "generated")
+
+    AWS_REGION = os.getenv("AWS_REGION")
+
+    # Durée de validité de l'URL présignée. Assez large pour que l'utilisateur
+    # parte manger entre la génération et le clic, assez courte pour qu'un lien
+    # qui fuite ne serve pas éternellement.
+    DOWNLOAD_URL_TTL_SECONDS = 3600
+
     CORS_ORIGINS = _parse_cors_origins(os.getenv("CORS_ORIGINS"))
 
 

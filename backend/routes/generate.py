@@ -12,6 +12,7 @@ from backend.services.ai.terraform_ai_service import TerraformAIService
 from backend.parser.terraform_parser import TerraformParser
 from backend.services.terraform_service import TerraformService
 from backend.services.terraform_validator_service import TerraformValidatorService
+from backend.utils.storage import StorageError, publish_archive
 from backend.utils.zip_manager import create_zip
 
 logger = logging.getLogger(__name__)
@@ -212,12 +213,11 @@ def generate(request: GenerateRequest):
         request.project_name, validation["valid"], repair_attempts, len(files)
     )
 
-    download = f"/api/download/{request.project_name}"
-
     try:
-        create_zip(project_path)
+        zip_path = create_zip(project_path)
+        download = publish_archive(zip_path, request.project_name)
 
-    except OSError as exc:
+    except (OSError, StorageError) as exc:
         # Same rule as validation: a late failure must not discard a generation
         # the user already paid for. The files stay on disk.
         logger.error("Could not archive project '%s': %s", request.project_name, exc)
