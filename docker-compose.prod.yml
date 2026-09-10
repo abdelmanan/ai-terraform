@@ -1,0 +1,42 @@
+# Compose de production, déposé sur l'instance EC2 dans /opt/ai-tf-landing-zone.
+#
+# Différence clé avec docker-compose.yml : aucun `build:`. Les images sont
+# construites par la CI et tirées depuis ECR. L'instance ne compile rien, elle
+# ne fait que tirer et démarrer — c'est ce qui rend le déploiement rapide et
+# reproductible.
+
+services:
+  backend:
+    image: ${ECR_REGISTRY}/${ECR_REPOSITORY_BACKEND}:${IMAGE_TAG}
+    environment:
+      # Le conteneur devient jetable : les ZIP partent sur S3, pas sur le disque
+      # de l'instance. Les identifiants viennent du rôle IAM de l'EC2, il n'y a
+      # donc aucune clé AWS à stocker ici.
+      S3_BUCKET: ${S3_BUCKET}
+      S3_PREFIX: ${S3_PREFIX:-generated}
+      AWS_REGION: ${AWS_REGION}
+      CORS_ORIGINS: ${CORS_ORIGINS}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      GROQ_API_KEY: ${GROQ_API_KEY}
+    volumes:
+      # Le cache de providers reste local : c'est un cache, pas une donnée.
+      # Sans lui, chaque redéploiement recoûte 675 Mo de téléchargement.
+      - tf-plugin-cache:/app/.terraform-plugin-cache
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
+  frontend:
+    image: ${ECR_REGISTRY}/${ECR_REPOSITORY_FRONTEND}:${IMAGE_TAG}
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
+volumes:
+  tf-plugin-cache:

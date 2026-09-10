@@ -1,0 +1,138 @@
+name: Deploy
+
+# Tout commit sur main qui passe les tests part en production.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION }}
+  ECR_REPOSITORY_BACKEND: ${{ vars.ECR_REPOSITORY_BACKEND }}
+  ECR_REPOSITORY_FRONTEND: ${{ vars.ECR_REPOSITORY_FRONTEND }}
+
+jobs:
+
+  # Un déploiement ne part jamais sans que la suite soit verte : c'est le seul
+  # garde-fou entre un commit et la production.
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - run: pip install -r requirements.txt
+      - run: pytest -q
+
+  build-and-deploy:
+    needs: test
+    runs-on: ubuntu-latest
+
+    # Exigé par l'authentification OIDC : GitHub obtient un jeton court auprès
+    # d'AWS au lieu qu'on stocke une clé d'accès permanente en secret.
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - uses: docker/setup-buildx-action@v3
+
+      # Le SHA du commit sert de tag : chaque image est traçable jusqu'à sa
+      # ligne de code, et un retour arrière consiste à redéployer un ancien tag.
+      - name: Build et push du backend
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ steps.ecr.outputs.registry }}/${{ env.ECR_REPOSITORY_BACKEND }}:${{ github.sha }}
+            ${{ steps.ecr.outputs.registry }}/${{ env.ECR_REPOSITORY_BACKEND }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build et push du frontend
+        uses: docker/build-push-action@v6
+        with:
+          context: ./frontend
+          push: true
+          tags: |
+            ${{ steps.ecr.outputs.registry }}/${{ env.ECR_REPOSITORY_FRONTEND }}:${{ github.sha }}
+            ${{ steps.ecr.outputs.registry }}/${{ env.ECR_REPOSITORY_FRONTEND }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # Le compose de prod est copié à chaque déploiement : l'instance n'a pas
+      # besoin d'un clone du dépôt, et le fichier ne peut pas dériver.
+      - name: Envoi du compose de production sur S3
+        run: |
+          aws s3 cp docker-compose.prod.yml \
+            "s3://${{ vars.S3_BUCKET }}/deploy/docker-compose.prod.yml"
+
+      # SSM plutôt que SSH : pas de clé privée dans les secrets GitHub, pas de
+      # port 22 ouvert sur l'instance, et chaque commande est auditée.
+      - name: Déploiement sur l'EC2 via SSM
+        run: |
+          COMMAND_ID=$(aws ssm send-command \
+            --instance-ids "${{ vars.EC2_INSTANCE_ID }}" \
+            --document-name "AWS-RunShellScript" \
+            --comment "Deploy ${{ github.sha }}" \
+            --parameters commands='[
+              "set -euo pipefail",
+              "cd /opt/ai-tf-landing-zone",
+              "aws s3 cp s3://${{ vars.S3_BUCKET }}/deploy/docker-compose.prod.yml ./docker-compose.prod.yml",
+              "aws ecr get-login-password --region ${{ env.AWS_REGION }} | docker login --username AWS --password-stdin ${{ steps.ecr.outputs.registry }}",
+              "export ECR_REGISTRY=${{ steps.ecr.outputs.registry }}",
+              "export ECR_REPOSITORY_BACKEND=${{ env.ECR_REPOSITORY_BACKEND }}",
+              "export ECR_REPOSITORY_FRONTEND=${{ env.ECR_REPOSITORY_FRONTEND }}",
+              "export IMAGE_TAG=${{ github.sha }}",
+              "docker compose -f docker-compose.prod.yml --env-file .env up -d --pull always",
+              "docker image prune -f"
+            ]' \
+            --query "Command.CommandId" --output text)
+
+          echo "SSM command: $COMMAND_ID"
+
+          # send-command est asynchrone : sans cette attente, le job serait vert
+          # même si le déploiement échouait sur l'instance.
+          aws ssm wait command-executed \
+            --command-id "$COMMAND_ID" \
+            --instance-id "${{ vars.EC2_INSTANCE_ID }}" || true
+
+          aws ssm get-command-invocation \
+            --command-id "$COMMAND_ID" \
+            --instance-id "${{ vars.EC2_INSTANCE_ID }}" \
+            --query "{Status:Status,Out:StandardOutputContent,Err:StandardErrorContent}" \
+            --output text
+
+          STATUS=$(aws ssm get-command-invocation \
+            --command-id "$COMMAND_ID" \
+            --instance-id "${{ vars.EC2_INSTANCE_ID }}" \
+            --query "Status" --output text)
+
+          test "$STATUS" = "Success"
+
+      - name: Vérification du healthcheck
+        run: |
+          for i in $(seq 1 30); do
+            if curl -fsS -m 5 "http://${{ vars.APP_HOST }}/health"; then
+              echo "Application joignable."
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "L'application ne répond pas après le déploiement."
+          exit 1
