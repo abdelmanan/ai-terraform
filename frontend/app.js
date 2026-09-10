@@ -1,4 +1,6 @@
-const API_BASE = "http://127.0.0.1:8000";
+// Fourni par config.js : "" en conteneur (nginx proxifie /api sur la même
+// origine), l'adresse d'uvicorn en développement local.
+const API_BASE = (window.APP_CONFIG && window.APP_CONFIG.API_BASE) || "";
 
 const PROJECT_NAME_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,62}$/;
 
@@ -184,7 +186,10 @@ createApp({
         status.value = "success";
       } catch (err) {
         errorMessage.value =
-          "Impossible de contacter le serveur (" + err.message + "). Vérifie que le backend tourne sur " + API_BASE + ".";
+          "Impossible de contacter le serveur (" + err.message + "). " +
+          (API_BASE
+            ? "Vérifie que le backend tourne sur " + API_BASE + "."
+            : "Vérifie que le service backend est démarré.");
         status.value = "error";
       } finally {
         stopTimer();
@@ -202,8 +207,13 @@ createApp({
     }
 
     function downloadUrl() {
-      if (!result.value) return "#";
-      return `${API_BASE}${result.value.download}`;
+      if (!result.value || !result.value.download) return "#";
+
+      const target = result.value.download;
+
+      // En mode S3 le backend renvoie une URL présignée absolue, qui ne doit
+      // surtout pas être préfixée ; en local, un chemin servi par notre API.
+      return /^https?:\/\//.test(target) ? target : `${API_BASE}${target}`;
     }
 
     return {
