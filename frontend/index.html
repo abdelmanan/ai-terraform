@@ -47,6 +47,7 @@
               placeholder="eu-west-1"
               required
             />
+            <p v-if="regionError" class="field-error">{{ regionError }}</p>
           </div>
 
           <div class="field">

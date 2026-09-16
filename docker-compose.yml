@@ -26,9 +26,13 @@ services:
   frontend:
     build: ./frontend
     image: ai-tf-landing-zone-frontend
+    environment:
+      # Optionnels : testent en local l'authentification de la prod.
+      BASIC_AUTH_USER: "${BASIC_AUTH_USER:-}"
+      BASIC_AUTH_PASSWORD: "${BASIC_AUTH_PASSWORD:-}"
     ports:
-      # 5173 côté hôte car app.js appelle le backend depuis le NAVIGATEUR
-      # (http://127.0.0.1:8000) et CORS_ORIGINS autorise cette origine.
+      # Même port que ./run.sh, pour ne pas avoir deux adresses à retenir.
+      # nginx proxifie /api vers le backend : le navigateur ne parle qu'à 5173.
       - "5173:80"
     depends_on:
       - backend

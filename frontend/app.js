@@ -4,6 +4,9 @@ const API_BASE = (window.APP_CONFIG && window.APP_CONFIG.API_BASE) || "";
 
 const PROJECT_NAME_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,62}$/;
 
+// Même règle que REGION_PATTERN côté backend.
+const REGION_PATTERN = /^[a-z]{2}(-gov|-iso[a-z]?)?-[a-z]+-\d{1,2}$/;
+
 const { createApp, reactive, ref, computed } = Vue;
 
 createApp({
@@ -30,11 +33,20 @@ createApp({
       return null;
     });
 
+    const regionError = computed(() => {
+      if (!form.region) return null;
+      if (!REGION_PATTERN.test(form.region)) {
+        return "Code de région AWS attendu, par exemple eu-west-3.";
+      }
+      return null;
+    });
+
     const isFormValid = computed(() => {
       return (
         form.project_name.trim().length > 0 &&
         !projectNameError.value &&
-        form.region.trim().length > 0
+        form.region.trim().length > 0 &&
+        !regionError.value
       );
     });
 
@@ -124,6 +136,13 @@ createApp({
       }));
     }
 
+    const HTTP_MESSAGES = {
+      401: "Authentification requise.",
+      429: "Trop de générations en cours ou trop de requêtes : réessaie dans quelques minutes.",
+      502: "Le backend ne répond pas.",
+      504: "La génération a dépassé le délai maximal du serveur.",
+    };
+
     const status = ref("idle"); // idle | loading | success | error
     const errorMessage = ref("");
     const result = ref(null);
@@ -174,7 +193,15 @@ createApp({
           body: JSON.stringify(form),
         });
 
-        const body = await response.json();
+        // nginx (limite de débit, auth, timeout) peut répondre avant le
+        // backend, et pas forcément en JSON : un statut lisible vaut mieux
+        // qu'un « impossible de contacter le serveur » trompeur.
+        let body;
+        try {
+          body = await response.json();
+        } catch {
+          body = { status: "error", message: HTTP_MESSAGES[response.status] || `Erreur HTTP ${response.status}.` };
+        }
 
         if (!response.ok || body.status === "error") {
           errorMessage.value = body.message || "Une erreur est survenue.";
@@ -219,6 +246,7 @@ createApp({
     return {
       form,
       projectNameError,
+      regionError,
       isFormValid,
       status,
       errorMessage,
