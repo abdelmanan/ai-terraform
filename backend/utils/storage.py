@@ -21,7 +21,7 @@ def is_remote():
     return bool(settings.S3_BUCKET)
 
 
-def publish_archive(zip_path, project_name):
+def publish_archive(zip_path, generation_id, project_name):
     """Return the URL the browser must call to download `zip_path`.
 
     Without S3_BUCKET the archive stays on local disk and we serve it ourselves,
@@ -34,12 +34,14 @@ def publish_archive(zip_path, project_name):
     """
 
     if not is_remote():
-        return f"/api/download/{project_name}"
+        return f"/api/download/{generation_id}"
 
     if boto3 is None:
         raise StorageError("S3_BUCKET is set but boto3 is not installed.")
 
-    key = f"{settings.S3_PREFIX.strip('/')}/{project_name}.zip"
+    # The generation id in the key keeps two projects of the same name apart,
+    # and makes the object impossible to guess from the project name alone.
+    key = f"{settings.S3_PREFIX.strip('/')}/{generation_id}/{project_name}.zip"
 
     client = boto3.client("s3", region_name=settings.AWS_REGION)
 
@@ -53,7 +55,11 @@ def publish_archive(zip_path, project_name):
 
         url = client.generate_presigned_url(
             "get_object",
-            Params={"Bucket": settings.S3_BUCKET, "Key": key},
+            Params={
+                "Bucket": settings.S3_BUCKET,
+                "Key": key,
+                "ResponseContentDisposition": f'attachment; filename="{project_name}.zip"'
+            },
             ExpiresIn=settings.DOWNLOAD_URL_TTL_SECONDS
         )
 

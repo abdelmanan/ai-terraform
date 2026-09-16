@@ -1,5 +1,9 @@
+import glob
 import logging
 import os
+import shutil
+import threading
+import uuid
 
 from fastapi import APIRouter
 from fastapi.responses import FileResponse
@@ -12,7 +16,9 @@ from backend.services.ai.terraform_ai_service import TerraformAIService
 from backend.parser.terraform_parser import TerraformParser
 from backend.services.terraform_service import TerraformService
 from backend.services.terraform_validator_service import TerraformValidatorService
-from backend.utils.storage import StorageError, publish_archive
+from backend.utils.cleanup import GENERATION_ID_PATTERN, purge_expired_generations
+from backend.utils.provider_pin import pin_provider_versions
+from backend.utils.storage import StorageError, is_remote, publish_archive
 from backend.utils.zip_manager import create_zip
 
 logger = logging.getLogger(__name__)
@@ -34,6 +40,10 @@ ai_service = TerraformAIService()
 parser = TerraformParser()
 terraform_service = TerraformService()
 validator = TerraformValidatorService()
+
+# Non-blocking on purpose: a request queued behind two multi-minute generations
+# would hit the proxy timeout anyway. Refusing at once lets the user retry.
+generation_slots = threading.BoundedSemaphore(settings.MAX_CONCURRENT_GENERATIONS)
 
 
 # How bad a failure at each step is. A project that no longer initialises is
@@ -91,9 +101,28 @@ def _validate_project(project_path, missing_files):
 @router.post("/generate")
 def generate(request: GenerateRequest):
 
+    if not generation_slots.acquire(blocking=False):
+        raise ApiException(
+            message="The server is busy with other generations, please retry in a few minutes.",
+            status_code=429
+        )
+
+    try:
+        purge_expired_generations()
+        return _generate(request)
+
+    finally:
+        generation_slots.release()
+
+
+def _generate(request):
+
+    generation_id = uuid.uuid4().hex
+
     logger.info(
-        "Generating project '%s' (%s/%s, template=%s)",
-        request.project_name, request.cloud, request.region, request.template
+        "Generating project '%s' [%s] (%s/%s, template=%s)",
+        request.project_name, generation_id,
+        request.cloud, request.region, request.template
     )
 
     prompt = prompt_service.build_prompt(request)
@@ -104,7 +133,7 @@ def generate(request: GenerateRequest):
 
     ai_response = ai_service.generate(prompt, warnings=warnings)
 
-    files = parser.parse(ai_response)
+    files = pin_provider_versions(parser.parse(ai_response))
 
     missing_files = parser.missing_required_files(files)
     if missing_files:
@@ -114,6 +143,7 @@ def generate(request: GenerateRequest):
         )
 
     project_path = terraform_service.save(
+        generation_id,
         request.project_name,
         files
     )
@@ -167,10 +197,11 @@ def generate(request: GenerateRequest):
             break
 
         # The repair prompt only returns the files it changed.
-        files = {**files, **repaired_files}
+        files = pin_provider_versions({**files, **repaired_files})
         missing_files = parser.missing_required_files(files)
 
         project_path = terraform_service.save(
+            generation_id,
             request.project_name,
             files
         )
@@ -199,7 +230,7 @@ def generate(request: GenerateRequest):
 
         files = best_files
         validation = best_validation
-        project_path = terraform_service.save(request.project_name, files)
+        project_path = terraform_service.save(generation_id, request.project_name, files)
 
     if repair_attempts:
         warnings.append(
@@ -215,7 +246,7 @@ def generate(request: GenerateRequest):
 
     try:
         zip_path = create_zip(project_path)
-        download = publish_archive(zip_path, request.project_name)
+        download = publish_archive(zip_path, generation_id, request.project_name)
 
     except (OSError, StorageError) as exc:
         # Same rule as validation: a late failure must not discard a generation
@@ -224,8 +255,18 @@ def generate(request: GenerateRequest):
         warnings.append(f"The project could not be archived for download: {exc}")
         download = None
 
+    else:
+        if is_remote():
+            # The archive now lives in S3: the local copy, .terraform included,
+            # would only fill the instance's disk until the next purge.
+            shutil.rmtree(
+                os.path.join(settings.GENERATED_DIR, generation_id),
+                ignore_errors=True
+            )
+
     return {
         "status": "success",
+        "generation_id": generation_id,
         "project": request.project_name,
         "generated_files": list(files.keys()),
         "warnings": warnings,
@@ -235,21 +276,28 @@ def generate(request: GenerateRequest):
     }
 
 
-@router.get("/download/{project_name}")
-def download(project_name: str):
+@router.get("/download/{generation_id}")
+def download(generation_id: str):
+
+    # A strict 32-hex id cannot hold a path separator or "..": no traversal is
+    # possible, and unlike a project name it cannot be guessed.
+    if not GENERATION_ID_PATTERN.match(generation_id):
+        raise ApiException(message="Invalid generation id.", status_code=422)
+
+    archives = [
+        path for path in glob.glob(
+            os.path.join(settings.GENERATED_DIR, generation_id, "*.zip")
+        )
+        if os.path.isfile(path)
+    ]
+
+    if not archives:
+        raise ApiException(message="Generated project not found.", status_code=404)
+
+    zip_path = archives[0]
+    project_name = os.path.basename(zip_path)[:-len(".zip")]
 
     if not PROJECT_NAME_PATTERN.match(project_name):
-        raise ApiException(message="Invalid project name.", status_code=422)
-
-    generated_dir_abs = os.path.abspath(settings.GENERATED_DIR)
-    zip_path = os.path.abspath(
-        os.path.join(generated_dir_abs, f"{project_name}.zip")
-    )
-
-    if os.path.commonpath([generated_dir_abs, zip_path]) != generated_dir_abs:
-        raise ApiException(message="Invalid project name.", status_code=422)
-
-    if not os.path.isfile(zip_path):
         raise ApiException(message="Generated project not found.", status_code=404)
 
     return FileResponse(

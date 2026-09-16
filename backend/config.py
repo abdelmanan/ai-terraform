@@ -79,5 +79,16 @@ class Settings:
 
     CORS_ORIGINS = _parse_cors_origins(os.getenv("CORS_ORIGINS"))
 
+    # Chaque génération lance jusqu'à trois `terraform init` et occupe un
+    # worker plusieurs minutes. Sur une petite instance, trois en parallèle
+    # suffisent à saturer mémoire et CPU : au-delà, on répond 429 tout de suite
+    # plutôt que de tout ralentir jusqu'au timeout.
+    MAX_CONCURRENT_GENERATIONS = int(os.getenv("MAX_CONCURRENT_GENERATIONS", "2"))
+
+    # Les générations locales (projet + .terraform + zip) sont purgées passé
+    # ce délai. En mode S3 l'archive vit dans le bucket : sa durée de vie est
+    # celle de la règle de cycle de vie du bucket, pas celle-ci.
+    GENERATION_TTL_SECONDS = int(os.getenv("GENERATION_TTL_SECONDS", str(24 * 3600)))
+
 
 settings = Settings()

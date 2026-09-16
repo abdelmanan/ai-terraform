@@ -11,9 +11,11 @@ PRESERVED_ENTRIES = {".terraform", ".terraform.lock.hcl"}
 
 class TerraformService:
 
-    def save(self, project_name, files):
+    def save(self, generation_id, project_name, files):
 
-        project_path = os.path.join(settings.GENERATED_DIR, project_name)
+        # One directory per generation: two users picking the same project
+        # name used to overwrite each other's files and archive.
+        project_path = os.path.join(settings.GENERATED_DIR, generation_id, project_name)
         project_dir_abs = os.path.abspath(project_path)
 
         try:

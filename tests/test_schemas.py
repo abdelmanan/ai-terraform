@@ -74,3 +74,26 @@ def test_bounded_fields_reject_values_out_of_range(field, value):
             region="eu-west-1",
             **{field: value}
         )
+
+
+@pytest.mark.parametrize("region", ["eu-west-3", "us-east-1", "ap-southeast-4", "us-gov-west-1", " eu-north-1 "])
+def test_region_accepts_aws_region_codes(region):
+    request = GenerateRequest(cloud="aws", project_name="my-project", region=region)
+    assert request.region == region.strip()
+
+
+@pytest.mark.parametrize("region", ["", "paris", "eu-west", "EU-WEST-3", "eu-west-3; rm -rf /"])
+def test_region_rejects_anything_else(region):
+    with pytest.raises(ValidationError):
+        GenerateRequest(cloud="aws", project_name="my-project", region=region)
+
+
+@pytest.mark.parametrize("cloud", ["azure", "gcp", "AWS"])
+def test_only_aws_is_accepted(cloud):
+    with pytest.raises(ValidationError):
+        GenerateRequest(cloud=cloud, project_name="my-project", region="eu-west-1")
+
+
+def test_only_the_landing_zone_template_is_accepted():
+    with pytest.raises(ValidationError):
+        GenerateRequest(cloud="aws", project_name="my-project", region="eu-west-1", template="eks")

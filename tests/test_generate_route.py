@@ -1,3 +1,6 @@
+import re
+import threading
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -37,7 +40,7 @@ def stub_pipeline(monkeypatch):
     monkeypatch.setattr(
         generate_module.terraform_service,
         "save",
-        lambda project_name, files: f"generated/{project_name}"
+        lambda generation_id, project_name, files: f"generated/{generation_id}/{project_name}"
     )
     monkeypatch.setattr(
         generate_module.validator,
@@ -47,6 +50,7 @@ def stub_pipeline(monkeypatch):
     monkeypatch.setattr(
         generate_module, "create_zip", lambda project_path: f"{project_path}.zip"
     )
+    monkeypatch.setattr(generate_module, "purge_expired_generations", lambda: 0)
 
 
 def test_generate_success(valid_generate_payload):
@@ -62,7 +66,97 @@ def test_generate_success(valid_generate_payload):
     }
     assert body["warnings"] == []
     assert body["validation"]["valid"] is True
-    assert body["download"] == f"/api/download/{valid_generate_payload['project_name']}"
+    assert re.fullmatch(r"[0-9a-f]{32}", body["generation_id"])
+    assert body["download"] == f"/api/download/{body['generation_id']}"
+
+
+def test_two_generations_of_the_same_project_do_not_share_a_directory(
+    monkeypatch, valid_generate_payload
+):
+    paths = []
+    monkeypatch.setattr(
+        generate_module.terraform_service,
+        "save",
+        lambda gid, name, files: paths.append(f"generated/{gid}/{name}") or paths[-1]
+    )
+
+    first = client.post("/api/generate", json=valid_generate_payload).json()
+    second = client.post("/api/generate", json=valid_generate_payload).json()
+
+    assert first["generation_id"] != second["generation_id"]
+    assert paths[0] != paths[1]
+    assert first["download"] != second["download"]
+
+
+def test_generate_answers_429_when_all_slots_are_busy(monkeypatch, valid_generate_payload):
+    monkeypatch.setattr(generate_module, "generation_slots", threading.BoundedSemaphore(1))
+    generate_module.generation_slots.acquire()
+
+    response = client.post("/api/generate", json=valid_generate_payload)
+
+    assert response.status_code == 429
+    assert response.json()["status"] == "error"
+
+
+def test_a_slot_is_released_even_when_the_generation_fails(monkeypatch, valid_generate_payload):
+    monkeypatch.setattr(generate_module, "generation_slots", threading.BoundedSemaphore(1))
+
+    def raise_ai_error(prompt, warnings=None):
+        raise ApiException(message="Groq is down", status_code=502)
+
+    monkeypatch.setattr(generate_module.ai_service, "generate", raise_ai_error)
+
+    assert client.post("/api/generate", json=valid_generate_payload).status_code == 502
+    assert client.post("/api/generate", json=valid_generate_payload).status_code == 502
+
+
+def test_provider_versions_are_pinned_before_saving(monkeypatch, valid_generate_payload):
+    monkeypatch.setattr(
+        generate_module.parser,
+        "parse",
+        lambda response: {
+            "provider.tf": (
+                'terraform {\n  required_providers {\n    aws = {\n'
+                '      source  = "hashicorp/aws"\n      version = "~> 5.0"\n'
+                '    }\n  }\n}\n'
+            ),
+            "main.tf": "resource \"aws_vpc\" \"main\" {}",
+        }
+    )
+    saved = []
+    monkeypatch.setattr(
+        generate_module.terraform_service,
+        "save",
+        lambda gid, name, files: saved.append(dict(files)) or f"generated/{gid}/{name}"
+    )
+
+    client.post("/api/generate", json=valid_generate_payload)
+
+    assert "~>" not in saved[0]["provider.tf"]
+    assert f'version = "{settings.AWS_PROVIDER_VERSION}"' in saved[0]["provider.tf"]
+
+
+def test_the_local_copy_is_removed_once_the_archive_is_on_s3(
+    monkeypatch, tmp_path, valid_generate_payload
+):
+    monkeypatch.setattr(settings, "GENERATED_DIR", str(tmp_path))
+    monkeypatch.setattr(generate_module, "is_remote", lambda: True)
+    monkeypatch.setattr(
+        generate_module, "publish_archive",
+        lambda zip_path, gid, name: "https://bucket.s3.amazonaws.com/signed"
+    )
+
+    def save(gid, name, files):
+        path = tmp_path / gid / name
+        path.mkdir(parents=True, exist_ok=True)
+        return str(path)
+
+    monkeypatch.setattr(generate_module.terraform_service, "save", save)
+
+    body = client.post("/api/generate", json=valid_generate_payload).json()
+
+    assert body["download"] == "https://bucket.s3.amazonaws.com/signed"
+    assert not (tmp_path / body["generation_id"]).exists()
 
 
 def test_a_truncated_ai_answer_reaches_the_api_response(monkeypatch, valid_generate_payload):
@@ -99,7 +193,7 @@ def test_generate_reports_warnings_when_files_missing_but_still_succeeds(
     assert body["status"] == "success"
     assert set(body["generated_files"]) == {"provider.tf", "main.tf"}
     assert any("missing" in w.lower() for w in body["warnings"])
-    assert body["download"] == f"/api/download/{valid_generate_payload['project_name']}"
+    assert body["download"] == f"/api/download/{body['generation_id']}"
 
 
 def test_generate_skips_validation_when_main_files_missing(
@@ -179,49 +273,69 @@ def test_generate_rejects_invalid_project_name(valid_generate_payload):
     assert response.status_code == 422
 
 
-def test_download_returns_zip(tmp_path, monkeypatch):
-    generated = tmp_path / "generated"
-    generated.mkdir()
-    (generated / "my-project.zip").write_bytes(b"PK\x03\x04fake-zip")
-    monkeypatch.setattr(settings, "GENERATED_DIR", str(generated))
+@pytest.mark.parametrize("field,value", [
+    ("cloud", "azure"),
+    ("template", "kubernetes"),
+    ("region", "paris"),
+])
+def test_generate_rejects_unsupported_inputs(valid_generate_payload, field, value):
+    valid_generate_payload[field] = value
 
-    response = client.get("/api/download/my-project")
+    response = client.post("/api/generate", json=valid_generate_payload)
+
+    assert response.status_code == 422
+
+
+GENERATION_ID = "0123456789abcdef0123456789abcdef"
+
+
+def _archive(generated, generation_id=GENERATION_ID, name="my-project"):
+    workspace = generated / generation_id
+    workspace.mkdir(parents=True)
+    (workspace / f"{name}.zip").write_bytes(b"PK\x03\x04fake-zip")
+
+
+def test_download_returns_zip(tmp_path, monkeypatch):
+    _archive(tmp_path)
+    monkeypatch.setattr(settings, "GENERATED_DIR", str(tmp_path))
+
+    response = client.get(f"/api/download/{GENERATION_ID}")
 
     assert response.status_code == 200
     assert response.content == b"PK\x03\x04fake-zip"
     assert response.headers["content-type"] == "application/zip"
+    # The user gets their project name back, not the opaque id.
+    assert 'filename="my-project.zip"' in response.headers["content-disposition"]
 
 
 def test_download_is_independent_of_the_current_working_directory(
     tmp_path, monkeypatch
 ):
     generated = tmp_path / "generated"
-    generated.mkdir()
-    (generated / "my-project.zip").write_bytes(b"PK\x03\x04fake-zip")
+    _archive(generated)
     monkeypatch.setattr(settings, "GENERATED_DIR", str(generated))
 
     elsewhere = tmp_path / "elsewhere"
     elsewhere.mkdir()
     monkeypatch.chdir(elsewhere)
 
-    response = client.get("/api/download/my-project")
+    response = client.get(f"/api/download/{GENERATION_ID}")
 
     assert response.status_code == 200
     assert response.content == b"PK\x03\x04fake-zip"
 
 
-def test_download_missing_project_returns_404(tmp_path, monkeypatch):
-    generated = tmp_path / "generated"
-    generated.mkdir()
-    monkeypatch.setattr(settings, "GENERATED_DIR", str(generated))
+def test_download_missing_generation_returns_404(tmp_path, monkeypatch):
+    monkeypatch.setattr(settings, "GENERATED_DIR", str(tmp_path))
 
-    response = client.get("/api/download/does-not-exist")
+    response = client.get(f"/api/download/{GENERATION_ID}")
 
     assert response.status_code == 404
 
 
-def test_download_rejects_invalid_project_name():
-    response = client.get("/api/download/invalid%20name")
+@pytest.mark.parametrize("bad_id", ["my-project", "0123abc", "invalid%20name", "0123456789ABCDEF0123456789ABCDEF"])
+def test_download_rejects_anything_but_a_generation_id(bad_id):
+    response = client.get(f"/api/download/{bad_id}")
 
     assert response.status_code == 422
 
@@ -290,7 +404,7 @@ def test_repair_gives_up_after_max_attempts(monkeypatch, valid_generate_payload)
     assert body["validation"]["valid"] is False
     # The project is still delivered, broken but downloadable.
     assert body["status"] == "success"
-    assert body["download"].endswith(valid_generate_payload["project_name"])
+    assert body["download"].endswith(body["generation_id"])
 
 
 def test_repair_is_skipped_when_validation_was_skipped(monkeypatch, valid_generate_payload):
@@ -325,7 +439,7 @@ def test_repair_merges_only_the_files_the_ai_returned(monkeypatch, valid_generat
     monkeypatch.setattr(
         generate_module.terraform_service,
         "save",
-        lambda name, files: saved.append(dict(files)) or f"generated/{name}"
+        lambda gid, name, files: saved.append(dict(files)) or f"generated/{gid}/{name}"
     )
 
     response = client.post("/api/generate", json=valid_generate_payload)
@@ -384,7 +498,7 @@ def test_a_repair_that_makes_things_worse_is_discarded(monkeypatch, valid_genera
     monkeypatch.setattr(
         generate_module.terraform_service,
         "save",
-        lambda name, files: saved.append(dict(files)) or f"generated/{name}"
+        lambda gid, name, files: saved.append(dict(files)) or f"generated/{gid}/{name}"
     )
 
     response = client.post("/api/generate", json=valid_generate_payload)
@@ -415,7 +529,7 @@ def test_a_repair_that_improves_without_fixing_is_kept(monkeypatch, valid_genera
     monkeypatch.setattr(
         generate_module.terraform_service,
         "save",
-        lambda name, files: saved.append(dict(files)) or f"generated/{name}"
+        lambda gid, name, files: saved.append(dict(files)) or f"generated/{gid}/{name}"
     )
 
     response = client.post("/api/generate", json=valid_generate_payload)
@@ -466,7 +580,7 @@ def test_terraform_failure_still_returns_the_project(monkeypatch, valid_generate
     assert body["status"] == "success"
     assert body["validation"]["step"] == "error"
     assert "timed out" in body["validation"]["stderr"]
-    assert body["download"].endswith(valid_generate_payload["project_name"])
+    assert body["download"].endswith(body["generation_id"])
 
 
 def test_no_repair_is_attempted_when_terraform_itself_failed(monkeypatch, valid_generate_payload):
