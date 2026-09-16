@@ -18,13 +18,18 @@ POST /api/generate
       ├─ PromptService ......... construit le prompt à partir des paramètres
       ├─ TerraformAIService .... appelle Groq (openai/gpt-oss-120b)
       ├─ TerraformParser ....... découpe la réponse en fichiers .tf
+      ├─ pin_provider_versions . impose les versions de providers en cache
       ├─ TerraformService ...... écrit le projet sur disque
       ├─ TerraformValidator .... terraform fmt → init → validate
       │      │
       │      └─ invalide ? ──► prompt de réparation (erreur + fichiers)
       │                        ──► re-parse ──► re-valide   (max 2 tours)
-      └─ create_zip ............ archive téléchargeable
+      └─ create_zip ............ archive → disque local ou S3 (URL présignée)
 ```
+
+Chaque génération reçoit un `generation_id` (UUID) : elle travaille dans
+`generated/<generation_id>/<project_name>/`, et c'est cet identifiant — pas le nom du
+projet — qui sert au téléchargement.
 
 Chaque couche a une responsabilité unique et se teste isolément : le pipeline complet se
 monte en test en ne simulant que `TerraformAIService.generate`.
@@ -60,7 +65,7 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 
-echo "GROQ_API_KEY=gsk_..." > .env
+cp .env.example .env   # puis renseigner GROQ_API_KEY
 ```
 
 Le premier `terraform init` télécharge les providers pinnés (~700 Mo) dans
@@ -83,10 +88,20 @@ uvicorn backend.app:app --reload --port 8000
 cd frontend && python3 -m http.server 5173
 ```
 
+### Avec Docker
+
+```bash
+docker compose up --build
+```
+
+Frontend sur http://localhost:5173 : nginx sert le statique et relaie `/api` vers le
+backend. Le Terraform CLI est embarqué dans l'image backend ; le cache de providers et
+les générations vivent dans des volumes nommés.
+
 ## Tests
 
 ```bash
-pytest          # 114 tests, sans réseau ni Terraform (tout est simulé)
+pytest          # 157 tests, sans réseau, Terraform ni AWS (tout est simulé)
 ```
 
 ---
@@ -124,9 +139,13 @@ Réponse `200` :
   "warnings": ["Terraform validation failed on the first attempt; 1 self-repair attempt(s) fixed the project."],
   "validation": { "valid": true, "step": "validate", "stdout": "Success!", "stderr": "" },
   "repair_attempts": 1,
-  "download": "/api/download/my-landing-zone"
+  "generation_id": "3f2c9a0e6b1d4c8e9f7a5b2d1c0e8f6a",
+  "download": "/api/download/3f2c9a0e6b1d4c8e9f7a5b2d1c0e8f6a"
 }
 ```
+
+`download` est un chemin de l'API en local, ou une **URL S3 présignée** (valable 1 h) quand
+`S3_BUCKET` est défini. Il vaut `null` si l'archivage a échoué.
 
 Un projet qui reste invalide après réparation renvoie quand même `200` avec
 `validation.valid = false` : le projet est livré, à l'utilisateur de décider.
@@ -137,9 +156,10 @@ court. Tout ce qui a pu être produit est livré, et ce qui a mal tourné est si
 `warnings` plutôt que d'échouer la requête — y compris une réponse du modèle tronquée au
 plafond de tokens, que rien ne rendait visible auparavant.
 
-### `GET /api/download/{project_name}`
+### `GET /api/download/{generation_id}`
 
-Renvoie l'archive `.zip` (sans `.terraform/` ni fichier de lock).
+Renvoie l'archive `<project_name>.zip` (sans `.terraform/` ni fichier de lock). Mode local
+uniquement : en mode S3, le lien présigné pointe directement sur le bucket.
 
 ### Erreurs
 
@@ -147,9 +167,10 @@ Format uniforme `{"status": "error", "message": "..."}`.
 
 | Code | Cas |
 |------|-----|
-| 422  | Paramètres invalides |
-| 404  | Projet inexistant |
-| 429  | Quota Groq atteint |
+| 422  | Paramètres invalides (`cloud` ≠ `aws`, région mal formée, nom de projet…) |
+| 401  | Authentification basique requise (nginx, si activée) |
+| 404  | Génération inexistante ou purgée |
+| 429  | Quota Groq atteint, trop de générations simultanées, ou limite de débit nginx |
 | 502  | Groq injoignable, ou réponse inexploitable |
 | 504  | Groq ou Terraform en timeout |
 
@@ -162,12 +183,21 @@ Format uniforme `{"status": "error", "message": "..."}`.
 | `GROQ_API_KEY` | — | **requis** |
 | `CORS_ORIGINS` | `http://localhost:5173,http://localhost:3000` | origines autorisées (séparées par des virgules) |
 | `LOG_LEVEL` | `INFO` | niveau de log |
+| `S3_BUCKET` | — | bucket des archives ; vide = disque local |
+| `S3_PREFIX` | `generated` | préfixe des clés S3 |
+| `AWS_REGION` | — | région du bucket |
+| `MAX_CONCURRENT_GENERATIONS` | `2` | générations simultanées avant de répondre 429 |
+| `GENERATION_TTL_SECONDS` | `86400` | durée de vie des générations sur le disque local |
+| `BASIC_AUTH_USER` / `BASIC_AUTH_PASSWORD` | — | conteneur **frontend** : active l'authentification basique nginx |
+
+Le modèle complet est dans [`.env.example`](.env.example).
 
 Réglages dans `backend/config.py` : modèle, timeout IA (180 s, 2 retries), répertoire de
 sortie, cache de providers Terraform.
 
 **Versions de providers** (`AWS_PROVIDER_VERSION`, `RANDOM_PROVIDER_VERSION`) : les prompts
-imposent au modèle ces versions exactes, jamais une plage `~>`. Une plage laissait le
+demandent ces versions exactes, jamais une plage `~>`, et `pin_provider_versions` les
+réécrit de toute façon après chaque parse — le modèle ne peut plus y déroger. Une plage laissait le
 registry résoudre vers une version absente du cache local, et le téléchargement épuisait le
 budget d'`init` sur un projet pourtant valide. Toute modification de ces valeurs doit être
 suivie d'un `terraform init` pour réamorcer le cache.
@@ -179,34 +209,62 @@ pris du projet est d'aboutir lentement plutôt que d'abandonner une génération
 
 ---
 
+## Déploiement
+
+Chaque push sur `main` déclenche [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml) :
+tests → build des deux images → push sur ECR → `docker compose up` sur l'EC2 via SSM →
+vérification de `/health`.
+
+L'infrastructure d'hébergement est créée **manuellement** dans la console AWS. Il faut :
+
+| Ressource | Détail |
+|-----------|--------|
+| **2 dépôts ECR** | backend et frontend |
+| **Bucket S3** | archives (`generated/`) et compose de prod (`deploy/`). Bloquer l'accès public ; ajouter une règle de cycle de vie qui expire `generated/` (ex. 7 jours) |
+| **Fournisseur OIDC** | `token.actions.githubusercontent.com`, audience `sts.amazonaws.com` |
+| **Rôle IAM de déploiement** | confiance limitée à `repo:<owner>/<repo>:ref:refs/heads/main` ; droits : push ECR, `s3:PutObject` sur `deploy/*`, `ssm:SendCommand` sur l'instance, `ssm:GetCommandInvocation` |
+| **Instance EC2** | Amazon Linux 2023, t3.medium ou plus conseillé (`terraform init` est gourmand, à ajuster à l’usage), ≥ 20 Go de disque (cache de providers ≈ 700 Mo), Docker + plugin compose, agent SSM |
+| **Profil IAM de l'instance** | `AmazonSSMManagedInstanceCore`, pull ECR, `s3:GetObject` sur `deploy/*`, `s3:PutObject` + `s3:GetObject` sur `generated/*` |
+| **Security group** | entrée 80 uniquement (pas de 22 : SSM remplace SSH) |
+| **`/opt/ai-tf-landing-zone/.env`** | sur l'instance, d'après [`.env.example`](.env.example) — avec `BASIC_AUTH_*` |
+
+Côté GitHub : secret `AWS_DEPLOY_ROLE_ARN`, variables `AWS_REGION`,
+`ECR_REPOSITORY_BACKEND`, `ECR_REPOSITORY_FRONTEND`, `S3_BUCKET`, `EC2_INSTANCE_ID`,
+`APP_HOST`.
+
+### Protections en place
+
+- **Authentification basique** nginx sur tout le site sauf `/health` (`BASIC_AUTH_*`).
+- **Limite de débit** nginx : 1 génération/min par IP (marge de 2), une seule à la fois par
+  IP ; 30 requêtes/min sur le reste de l'API.
+- **Plafond global** côté backend (`MAX_CONCURRENT_GENERATIONS`) : 429 immédiat au-delà.
+- **Purge** des générations locales passé `GENERATION_TTL_SECONDS` ; en mode S3, la copie
+  locale est supprimée dès l'upload.
+
 ## Limites connues
 
 Ce projet est une **démo fonctionnelle**, pas un service de production.
 
-- **Pas d'authentification ni de rate limiting.** `/api/generate` consomme des tokens payants
-  et lance des sous-processus : ne pas exposer publiquement en l'état.
-- **`project_name` est le seul identifiant.** Deux générations du même nom s'écrasent, et
-  l'URL de téléchargement est devinable. Un `generation_id` serait la vraie correction.
-- **État sur le disque local.** `generated/` n'est jamais purgé et empêche de scaler
-  horizontalement.
-- **`cloud` et `region` ne sont pas validés.** `cloud="azure"` produit quand même du
-  Terraform AWS ; une région inexistante ne casse qu'au `terraform plan`.
+- **Pas de HTTPS.** L'authentification basique circule en clair sur le port 80 : ajouter un
+  certificat (ALB + ACM, ou Caddy/certbot sur l'instance) avant d'y mettre un vrai mot de
+  passe.
+- **Requête synchrone de plusieurs minutes.** nginx l'autorise (900 s), mais un ALB placé
+  devant la coupera à 60 s par défaut : relever son `idle timeout`, ou passer à une
+  génération asynchrone (job + polling).
+- **La limite de débit est par IP**, et derrière un load balancer elle verrait l'IP du LB
+  (voir le commentaire en tête de `frontend/nginx.conf`).
 - **`terraform validate` prouve que le code est valide, pas qu'il respecte les paramètres
   demandés.** Vérifier le nombre de subnets ou la présence de la NAT demanderait des
   assertions sur le `plan`.
-- **Le pin des versions de providers n'est qu'une consigne de prompt.** Rien ne vérifie
-  côté code ce que le modèle a réellement écrit dans `provider.tf` : s'il ignore la
-  consigne, le téléchargement d'une version non cachée peut à nouveau faire expirer
-  `init`. Une normalisation déterministe de `provider.tf` après le parse serait la vraie
-  garantie.
-- Seuls `cloud=aws` et `template=landing-zone` sont réellement implémentés.
+- Seuls `cloud=aws` et `template=landing-zone` sont implémentés (les autres valeurs sont
+  refusées en 422).
 
 ## Pistes
 
+- HTTPS
+- Génération asynchrone avec suivi de progression
 - Sortie structurée (JSON schema) côté modèle : supprimerait entièrement le parser maison
 - Assertions sur `terraform plan` pour valider le respect des paramètres
-- `generation_id`, purge de `generated/`, authentification
-- Dockerfile et CI
 
 ## Structure
 
@@ -220,7 +278,8 @@ backend/
   services/              ai/ · prompt · terraform (disque) · terraform_validator
   parser/                découpage de la réponse du modèle
   exceptions/            ApiException + handlers centralisés
-  utils/zip_manager.py
-frontend/                Vue 3 via CDN, sans build
-tests/                   114 tests
+  utils/                 zip · stockage S3 · purge · pin des providers
+frontend/                Vue 3 via CDN, sans build ; nginx.conf + auth optionnelle
+tests/                   157 tests
+.github/workflows/       CI/CD vers EC2
 ```
