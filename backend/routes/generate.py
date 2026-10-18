@@ -25,14 +25,7 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["Terraform"])
 
-# A prompt rule cannot guarantee valid HCL: the model still emitted the removed
-# `vpc = true` on aws_eip despite an explicit rule forbidding it. Showing it the
-# actual terraform error fixes that reliably, so we retry instead of giving the
-# raw stderr to a user who does not know Terraform.
 MAX_REPAIR_ATTEMPTS = 2
-
-# Steps the AI cannot fix: no files to reason about, or Terraform itself is
-# unavailable.
 UNFIXABLE_STEPS = ("skipped", "error")
 
 prompt_service = PromptService()
@@ -41,13 +34,8 @@ parser = TerraformParser()
 terraform_service = TerraformService()
 validator = TerraformValidatorService()
 
-# Non-blocking on purpose: a request queued behind two multi-minute generations
-# would hit the proxy timeout anyway. Refusing at once lets the user retry.
 generation_slots = threading.BoundedSemaphore(settings.MAX_CONCURRENT_GENERATIONS)
 
-
-# How bad a failure at each step is. A project that no longer initialises is
-# worse than one that initialises but has HCL errors, however many.
 STEP_PENALTY = {
     "validate": 0,
     "init": 1_000,
@@ -85,9 +73,6 @@ def _validate_project(project_path, missing_files):
         return validator.validate(project_path)
 
     except ApiException as exc:
-        # Terraform being missing, hanging or crashing says nothing about the
-        # generated code. Report it and still hand over the project rather than
-        # throwing away work the user can perfectly well use.
         logger.warning("Could not run Terraform validation: %s", exc.message)
 
         return {
@@ -127,8 +112,6 @@ def _generate(request):
 
     prompt = prompt_service.build_prompt(request)
 
-    # Declared before the first call: the AI service reports a truncated answer
-    # through it, and that has to reach the user, not just the log.
     warnings = []
 
     ai_response = ai_service.generate(prompt, warnings=warnings)
@@ -150,9 +133,6 @@ def _generate(request):
 
     validation = _validate_project(project_path, missing_files)
 
-    # A repair can make things worse: the model may return a shortened main.tf
-    # while outputs.tf still references what it dropped. We keep the least
-    # broken attempt and always ship that one.
     best_files = files
     best_validation = validation
     best_score = _quality_score(validation)
@@ -174,8 +154,6 @@ def _generate(request):
         )
 
         try:
-            # Last attempt: a targeted patch has already failed, so ask for a
-            # coherent rewrite of the whole project instead of another patch.
             full_rewrite = repair_attempts == MAX_REPAIR_ATTEMPTS
 
             repair_prompt = prompt_service.build_repair_prompt(
@@ -189,14 +167,11 @@ def _generate(request):
             )
 
         except ApiException as exc:
-            # A failed repair must not lose the project already on disk: keep
-            # the last validation result and let the user download it anyway.
             warnings.append(
                 f"Self-repair attempt {repair_attempts} failed: {exc.message}"
             )
             break
 
-        # The repair prompt only returns the files it changed.
         files = pin_provider_versions({**files, **repaired_files})
         missing_files = parser.missing_required_files(files)
 
@@ -213,8 +188,6 @@ def _generate(request):
         if score < best_score:
             best_files, best_validation, best_score = files, validation, score
 
-    # Only roll back when the project on disk is genuinely worse than an
-    # earlier attempt: an equally good later version is fine to keep.
     if _quality_score(validation) > best_score:
 
         logger.info(
@@ -249,16 +222,12 @@ def _generate(request):
         download = publish_archive(zip_path, generation_id, request.project_name)
 
     except (OSError, StorageError) as exc:
-        # Same rule as validation: a late failure must not discard a generation
-        # the user already paid for. The files stay on disk.
         logger.error("Could not archive project '%s': %s", request.project_name, exc)
         warnings.append(f"The project could not be archived for download: {exc}")
         download = None
 
     else:
         if is_remote():
-            # The archive now lives in S3: the local copy, .terraform included,
-            # would only fill the instance's disk until the next purge.
             shutil.rmtree(
                 os.path.join(settings.GENERATED_DIR, generation_id),
                 ignore_errors=True
@@ -279,8 +248,6 @@ def _generate(request):
 @router.get("/download/{generation_id}")
 def download(generation_id: str):
 
-    # A strict 32-hex id cannot hold a path separator or "..": no traversal is
-    # possible, and unlike a project name it cannot be guessed.
     if not GENERATION_ID_PATTERN.match(generation_id):
         raise ApiException(message="Invalid generation id.", status_code=422)
 
