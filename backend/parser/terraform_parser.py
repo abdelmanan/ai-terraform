@@ -41,12 +41,8 @@ class TerraformParser:
 
             header_match = self.FILE_HEADER_PATTERN.match(line)
 
-            # Only treat a "### ..." line as a new file marker when it is
-            # immediately followed by a BEGIN marker. This avoids breaking
-            # on Markdown headings (e.g. "### Usage") inside README.md content.
             if header_match and next_line in self.BEGIN_MARKERS:
 
-                # Save previous file
                 if current_file:
                     self._save_file(
                         files,
@@ -58,12 +54,8 @@ class TerraformParser:
                 current_content = []
 
             else:
-
-                # Keep the raw line: stripping here would flatten the
-                # indentation of every generated Terraform / Markdown file.
                 current_content.append(raw_line)
 
-        # Save last file
         if current_file:
             self._save_file(
                 files,
@@ -71,7 +63,6 @@ class TerraformParser:
                 current_content
             )
 
-        # No file marker ("### filename" followed by a BEGIN marker) found at all
         if not files:
             raise ApiException(
                 message=(
@@ -89,8 +80,6 @@ class TerraformParser:
     def _save_file(self, files, filename, content):
 
         if not filename:
-            # Can't use an unnamed file; skip it rather than discarding
-            # everything else that was successfully parsed.
             return
 
         content_text = "\n".join(content).strip()
@@ -101,8 +90,6 @@ class TerraformParser:
         )
 
         if not cleaned_content:
-            # AI produced an empty file (e.g. truncated response); skip it
-            # rather than failing the whole batch.
             return
 
         files[filename] = cleaned_content
