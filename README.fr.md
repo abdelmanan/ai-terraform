@@ -159,8 +159,8 @@ flowchart LR
 Remplacez l’URL par celle de votre dépôt GitHub :
 
 ```bash
-git clone https://github.com/<votre-utilisateur>/AI-Terraform-Landing-Zone-Generator.git
-cd AI-Terraform-Landing-Zone-Generator
+git clone https://github.com/abdelmanan/ai-terraform
+cd ai-terraform
 ```
 
 ### 2. Créer un environnement virtuel
@@ -190,7 +190,7 @@ GROQ_API_KEY=votre_cle_api
 CORS_ORIGINS=http://localhost:5173,http://localhost:3000
 ```
 
-Ne partagez jamais votre clé API et ne la commitez pas dans Git.
+
 
 ### 4. Démarrer l’API
 
@@ -287,9 +287,7 @@ python -m pytest -q
 
 Les tests examinés couvrent notamment la validation des entrées, le parseur, la gestion des erreurs, l’écriture des fichiers, la validation Terraform simulée et la création de l’archive.
 
-Ajoutez ici une capture réelle du résultat des tests :
 
-![Résultat des tests automatisés](docs/images/tests-pytest.png)
 
 Le workflow `.github/workflows/deploy.yml` est associé au pipeline `Deploy`. Le flux de déploiement décrit comprend les tests, la construction des images, leur publication dans ECR, une commande SSM et une vérification de santé. **Vérifiez le workflow et une exécution réussie avant d’affirmer que chaque étape est opérationnelle dans la version publiée.**
 
