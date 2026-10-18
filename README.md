@@ -1,285 +1,333 @@
+ <div align="center">
+
 # AI Terraform Landing Zone Generator
 
-Génère une **AWS Landing Zone Terraform** (VPC, subnets, routing, NAT, logs) à partir d'un
-formulaire, via un LLM — puis **valide et répare automatiquement** le code produit avant de
-le livrer.
+**Generate an AWS infrastructure foundation with AI, then validate its configuration with Terraform.**
 
-Le point clé : un LLM ne garantit pas du Terraform valide, même avec des règles explicites
-dans le prompt. Le projet ne se contente donc pas de générer — il exécute `terraform
-validate`, et **renvoie l'erreur au modèle pour qu'il se corrige** jusqu'à 2 fois.
+[![Python](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)](https://www.python.org/)
+[![FastAPI](https://img.shields.io/badge/FastAPI-API-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
+[![Terraform](https://img.shields.io/badge/Terraform-IaC-844FBA?logo=terraform&logoColor=white)](https://developer.hashicorp.com/terraform)
+[![Docker](https://img.shields.io/badge/Docker-Containers-2496ED?logo=docker&logoColor=white)](https://www.docker.com/)
+[![GitHub Actions](https://img.shields.io/badge/GitHub_Actions-CI%2FCD-2088FF?logo=githubactions&logoColor=white)](https://github.com/features/actions)
+[![AWS](https://img.shields.io/badge/AWS-Cloud-FF9900?logo=amazonaws&logoColor=white)](https://aws.amazon.com/)
 
----
+</div>
 
-## Fonctionnement
+> **Status: functional personal project.** The generation workflow, Terraform validation, automated tests, and AWS deployment workflow have been implemented according to the project documentation. The described deployment relies on a single instance and uses HTTP: it should not be considered production-ready.
 
+[English version](README.md)
+
+## Table of Contents
+
+- [Overview](#présentation)
+- [Demo](#démonstration)
+- [Features](#fonctionnalités)
+- [Architecture](#architecture)
+- [Technologies](#technologies)
+- [Local Installation](#installation-locale)
+- [Usage](#utilisation)
+- [Tests and CI/CD](#tests-et-cicd)
+- [AWS Deployment](#déploiement-aws)
+- [Security and Limitations](#sécurité-et-limites)
+- [Possible Improvements](#améliorations-possibles)
+- [Author](#auteur)
+
+## Overview
+
+Manually creating an AWS network foundation takes time and requires a good understanding of Terraform. An AI model can speed up code generation, but its output may be incomplete or invalid.
+
+**AI Terraform Landing Zone Generator** automates part of this process: the user provides a few parameters, the application asks a language model to generate a Terraform project, then validates the result using the Terraform CLI before preparing a ZIP archive.
+
+The engineering principle is simple: **AI proposes the code; deterministic checks validate it.**
+
+The project is primarily intended for students and Cloud/DevOps professionals who want to understand and experiment with an infrastructure generation workflow.
+
+## Demo
+
+### Generation Interface
+
+![Terraform generator interface](docs/images/interface-generator.png)
+
+### Generated Terraform Files
+
+![Generated Terraform files](docs/images/terraform-generated.png)
+
+### GitHub Actions Pipeline
+
+![GitHub Actions CI/CD pipeline](docs/images/github-actions.png)
+
+### AWS Deployment Architecture
+
+![AWS deployment architecture](docs/images/architecture-cloud.png)
+
+## Features
+
+### Features verified in the reviewed code
+
+- FastAPI API with the `POST /api/generate` endpoint.
+- Request parameter validation using Pydantic.
+- Generation through an OpenAI-compatible API, configured to use Groq and the `openai/gpt-oss-120b` model.
+- Analysis of the model response and verification that the six expected files are present.
+- Writing files to an isolated project directory.
+- Execution of `terraform init` followed by `terraform validate`.
+- Creation of a ZIP archive without the `.terraform/` directory or `.terraform.lock.hcl`.
+- Health check route `GET /health` and structured error handling.
+
+### Announced features to be confirmed in the current version
+
+The following items are described in the project, but not all of them could be reverified in the reviewed code. Check them before presenting them as guaranteed features:
+
+- Static web interface in French.
+- Docker containers for the frontend and backend.
+- Storage of archives in S3 with presigned links.
+- GitHub Actions workflow that builds and publishes images to ECR, then deploys through AWS Systems Manager.
+- AWS deployment on EC2.
+
+### What the application does not do
+
+- It does not execute `terraform plan` or `terraform apply`.
+- It does not deploy the generated infrastructure.
+- It does not guarantee the security, cost efficiency, or actual operational correctness of the generated code.
+- It supports AWS and a single template: `landing-zone`.
+- It depends on an external LLM service and does not provide an offline mode.
+
+## Architecture
+
+### Generation Workflow
+
+```mermaid
+flowchart LR
+    U[User] --> UI[Web Interface]
+    UI --> API[FastAPI API]
+    API --> V[Pydantic Validation]
+    V --> P[Prompt Construction]
+    P <--> LLM[Groq API / LLM]
+    P --> PARSE[Response Parsing]
+    PARSE --> FILES[Writing the 6 Files]
+    FILES --> TF[terraform init + validate]
+    TF --> ZIP[ZIP Archive Creation]
+    ZIP --> OUT[Download / API Response]
 ```
-POST /api/generate
-      │
-      ├─ PromptService ......... construit le prompt à partir des paramètres
-      ├─ TerraformAIService .... appelle Groq (openai/gpt-oss-120b)
-      ├─ TerraformParser ....... découpe la réponse en fichiers .tf
-      ├─ pin_provider_versions . impose les versions de providers en cache
-      ├─ TerraformService ...... écrit le projet sur disque
-      ├─ TerraformValidator .... terraform fmt → init → validate
-      │      │
-      │      └─ invalide ? ──► prompt de réparation (erreur + fichiers)
-      │                        ──► re-parse ──► re-valide   (max 2 tours)
-      └─ create_zip ............ archive → disque local ou S3 (URL présignée)
+
+### Main Steps
+
+1. The API validates the received configuration.
+2. The service builds a prompt and calls the language model.
+3. The parser extracts the Terraform files and verifies that they are present.
+4. The files are written to the project directory.
+5. Terraform executes `init` followed by `validate`.
+6. The project is packaged into a ZIP archive, and the validation result is returned.
+
+**Key takeaway:** an HTTP 200 response does not necessarily mean that Terraform has validated the project. Check the `validation.valid` field and the associated diagnostics.
+
+## Technologies
+
+| Technology | Purpose |
+|---|---|
+| Python 3.12 | Backend |
+| FastAPI and Uvicorn | HTTP API |
+| Pydantic | Input validation |
+| Groq API via an OpenAI-compatible SDK | Code generation |
+| Terraform CLI | Initialization and validation of the generated project |
+| pytest | Automated tests |
+| Docker and nginx | Containerization and web serving, depending on the project configuration |
+| GitHub Actions | CI/CD pipeline |
+| AWS EC2, ECR, S3, SSM, and IAM | Resources used in the described deployment |
+
+## Local Installation
+
+### Prerequisites
+
+- Git
+- Python 3.12 recommended
+- Terraform CLI available in the `PATH`
+- A Groq API key to perform an actual generation
+- Docker, only if you want to use the containers
+
+### 1. Clone the Repository
+
+Replace the URL with that of your GitHub repository:
+
+```bash
+git clone https://github.com/abdelmanan/ai-terraform
+cd ai-terraform
 ```
 
-Chaque génération reçoit un `generation_id` (UUID) : elle travaille dans
-`generated/<generation_id>/<project_name>/`, et c'est cet identifiant — pas le nom du
-projet — qui sert au téléchargement.
+### 2. Create a Virtual Environment
 
-Chaque couche a une responsabilité unique et se teste isolément : le pipeline complet se
-monte en test en ne simulant que `TerraformAIService.generate`.
-
-### Le protocole de réponse
-
-Le modèle doit répondre dans un format texte délimité, que le parser découpe :
-
-```
-### main.tf
-BEGIN_TERRAFORM
-resource "aws_vpc" "main" { ... }
-END_TERRAFORM
-
-### README.md
-BEGIN_TEXT
-...
-END_TEXT
-```
-
-Un `### titre` n'est traité comme un en-tête de fichier que s'il est **immédiatement suivi
-d'un marqueur `BEGIN_*`** — sinon un titre Markdown dans le README généré casserait le
-découpage.
-
----
-
-## Installation
-
-Prérequis : **Python 3.12+**, **Terraform CLI** (`terraform version`), une clé **Groq**.
+**Linux / macOS**
 
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-
-cp .env.example .env   # puis renseigner GROQ_API_KEY
 ```
 
-Le premier `terraform init` télécharge les providers pinnés (~700 Mo) dans
-`.terraform-plugin-cache/`, qui n'est pas versionné. Les générations suivantes réutilisent
-ce cache — c'est ce qui garde `init` sous son budget de temps.
+**Windows PowerShell**
 
-## Lancement
-
-```bash
-./run.sh
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
 ```
 
-- Backend  : http://localhost:8000 (docs interactives sur `/docs`)
-- Frontend : http://localhost:5173
+### 3. Configure Environment Variables
 
-Ou séparément :
+Create a `.env` file at the root of the repository:
+
+```dotenv
+GROQ_API_KEY=your_api_key
+CORS_ORIGINS=http://localhost:5173,http://localhost:3000
+```
+
+### 4. Start the API
+
+From the root of the repository:
 
 ```bash
 uvicorn backend.app:app --reload --port 8000
-cd frontend && python3 -m http.server 5173
 ```
 
-### Avec Docker
+Check the service:
 
 ```bash
-docker compose up --build
+curl http://localhost:8000/health
 ```
 
-Frontend sur http://localhost:5173 : nginx sert le statique et relaie `/api` vers le
-backend. Le Terraform CLI est embarqué dans l'image backend ; le cache de providers et
-les générations vivent dans des volumes nommés.
+The expected response is:
 
-## Tests
+```json
+{"status":"healthy"}
+```
+
+Interactive documentation: [http://localhost:8000/docs](http://localhost:8000/docs)
+
+### 5. Start the Frontend (if applicable)
+
+If the static frontend is present and correctly calls the API from this origin:
 
 ```bash
-pytest          # 157 tests, sans réseau, Terraform ni AWS (tout est simulé)
+python -m http.server 5173 --directory frontend
 ```
 
----
+Then open [http://localhost:5173](http://localhost:5173).
 
-## API
+> Depending on the frontend and proxy configuration, a simple static server may not be sufficient for API calls. If necessary, use the repository's Docker/nginx configuration after verifying it.
 
-### `POST /api/generate`
+## Usage
 
-```json
-{
-  "cloud": "aws",
-  "project_name": "my-landing-zone",
-  "region": "eu-west-3",
-  "template": "landing-zone",
-  "availability_zones": 3,
-  "public_subnets": 3,
-  "private_subnets": 3,
-  "enable_nat_gateway": true,
-  "enable_cloudtrail": false,
-  "enable_cloudwatch": true,
-  "enable_s3_logs": true
-}
+The main endpoint is `POST /api/generate`.
+
+Example request:
+
+```bash
+curl -X POST http://localhost:8000/api/generate \
+  -H "Content-Type: application/json" \
+  -d '{
+    "cloud": "aws",
+    "project_name": "demo-landing-zone",
+    "region": "eu-west-1",
+    "template": "landing-zone",
+    "availability_zones": 2,
+    "public_subnets": 2,
+    "private_subnets": 2,
+    "enable_nat_gateway": true,
+    "enable_cloudtrail": false,
+    "enable_cloudwatch": false,
+    "enable_s3_logs": false
+  }'
 ```
 
-`project_name` : `^[a-zA-Z0-9][a-zA-Z0-9_-]{0,62}$`. Les compteurs sont bornés entre 1 et 10.
+The generated project contains the following six files:
 
-Réponse `200` :
-
-```json
-{
-  "status": "success",
-  "project": "my-landing-zone",
-  "generated_files": ["provider.tf", "main.tf", "variables.tf", "outputs.tf",
-                      "terraform.tfvars", "README.md"],
-  "warnings": ["Terraform validation failed on the first attempt; 1 self-repair attempt(s) fixed the project."],
-  "validation": { "valid": true, "step": "validate", "stdout": "Success!", "stderr": "" },
-  "repair_attempts": 1,
-  "generation_id": "3f2c9a0e6b1d4c8e9f7a5b2d1c0e8f6a",
-  "download": "/api/download/3f2c9a0e6b1d4c8e9f7a5b2d1c0e8f6a"
-}
+```text
+demo-landing-zone/
+├── provider.tf
+├── main.tf
+├── variables.tf
+├── outputs.tf
+├── terraform.tfvars
+└── README.md
 ```
 
-`download` est un chemin de l'API en local, ou une **URL S3 présignée** (valable 1 h) quand
-`S3_BUCKET` est défini. Il vaut `null` si l'archivage a échoué.
+The API response includes, among other things, the generated files and the Terraform validation status. If validation fails, review the diagnostics before retrying or fixing the code.
 
-Un projet qui reste invalide après réparation renvoie quand même `200` avec
-`validation.valid = false` : le projet est livré, à l'utilisateur de décider.
+### Before Deploying the Generated Infrastructure
 
-**La requête est longue par choix** : jusqu'à trois appels au modèle et trois cycles
-`init`/`validate`, soit plusieurs minutes. Aucun client ne doit lui appliquer un timeout
-court. Tout ce qui a pu être produit est livré, et ce qui a mal tourné est signalé dans
-`warnings` plutôt que d'échouer la requête — y compris une réponse du modèle tronquée au
-plafond de tokens, que rien ne rendait visible auparavant.
+After extracting the archive, review the files and check the plan before creating any resources:
 
-### `GET /api/download/{generation_id}`
-
-Renvoie l'archive `<project_name>.zip` (sans `.terraform/` ni fichier de lock). Mode local
-uniquement : en mode S3, le lien présigné pointe directement sur le bucket.
-
-### Erreurs
-
-Format uniforme `{"status": "error", "message": "..."}`.
-
-| Code | Cas |
-|------|-----|
-| 422  | Paramètres invalides (`cloud` ≠ `aws`, région mal formée, nom de projet…) |
-| 401  | Authentification basique requise (nginx, si activée) |
-| 404  | Génération inexistante ou purgée |
-| 429  | Quota Groq atteint, trop de générations simultanées, ou limite de débit nginx |
-| 502  | Groq injoignable, ou réponse inexploitable |
-| 504  | Groq ou Terraform en timeout |
-
----
-
-## Configuration
-
-| Variable | Défaut | Rôle |
-|----------|--------|------|
-| `GROQ_API_KEY` | — | **requis** |
-| `CORS_ORIGINS` | `http://localhost:5173,http://localhost:3000` | origines autorisées (séparées par des virgules) |
-| `LOG_LEVEL` | `INFO` | niveau de log |
-| `S3_BUCKET` | — | bucket des archives ; vide = disque local |
-| `S3_PREFIX` | `generated` | préfixe des clés S3 |
-| `AWS_REGION` | — | région du bucket |
-| `MAX_CONCURRENT_GENERATIONS` | `2` | générations simultanées avant de répondre 429 |
-| `GENERATION_TTL_SECONDS` | `86400` | durée de vie des générations sur le disque local |
-| `BASIC_AUTH_USER` / `BASIC_AUTH_PASSWORD` | — | conteneur **frontend** : active l'authentification basique nginx |
-
-Le modèle complet est dans [`.env.example`](.env.example).
-
-Réglages dans `backend/config.py` : modèle, timeout IA (180 s, 2 retries), répertoire de
-sortie, cache de providers Terraform.
-
-**Versions de providers** (`AWS_PROVIDER_VERSION`, `RANDOM_PROVIDER_VERSION`) : les prompts
-demandent ces versions exactes, jamais une plage `~>`, et `pin_provider_versions` les
-réécrit de toute façon après chaque parse — le modèle ne peut plus y déroger. Une plage laissait le
-registry résoudre vers une version absente du cache local, et le téléchargement épuisait le
-budget d'`init` sur un projet pourtant valide. Toute modification de ces valeurs doit être
-suivie d'un `terraform init` pour réamorcer le cache.
-
-Budgets de temps dans `TerraformValidatorService` : `init` **420 s**, autres commandes
-**120 s**. Ces budgets sont volontairement larges : `init` est mesuré à ~57 s avec un cache
-chaud, mais doit aussi couvrir un cache froid où le provider épinglé pèse 675 Mo. Le parti
-pris du projet est d'aboutir lentement plutôt que d'abandonner une génération valide.
-
----
-
-## Déploiement
-
-Chaque push sur `main` déclenche [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml) :
-tests → build des deux images → push sur ECR → `docker compose up` sur l'EC2 via SSM →
-vérification de `/health`.
-
-L'infrastructure d'hébergement est créée **manuellement** dans la console AWS. Il faut :
-
-| Ressource | Détail |
-|-----------|--------|
-| **2 dépôts ECR** | backend et frontend |
-| **Bucket S3** | archives (`generated/`) et compose de prod (`deploy/`). Bloquer l'accès public ; ajouter une règle de cycle de vie qui expire `generated/` (ex. 7 jours) |
-| **Fournisseur OIDC** | `token.actions.githubusercontent.com`, audience `sts.amazonaws.com` |
-| **Rôle IAM de déploiement** | confiance limitée à `repo:<owner>/<repo>:ref:refs/heads/main` ; droits : push ECR, `s3:PutObject` sur `deploy/*`, `ssm:SendCommand` sur l'instance, `ssm:GetCommandInvocation` |
-| **Instance EC2** | Amazon Linux 2023, t3.medium ou plus conseillé (`terraform init` est gourmand, à ajuster à l’usage), ≥ 20 Go de disque (cache de providers ≈ 700 Mo), Docker + plugin compose, agent SSM |
-| **Profil IAM de l'instance** | `AmazonSSMManagedInstanceCore`, pull ECR, `s3:GetObject` sur `deploy/*`, `s3:PutObject` + `s3:GetObject` sur `generated/*` |
-| **Security group** | entrée 80 uniquement (pas de 22 : SSM remplace SSH) |
-| **`/opt/ai-tf-landing-zone/.env`** | sur l'instance, d'après [`.env.example`](.env.example) — avec `BASIC_AUTH_*` |
-
-Côté GitHub : secret `AWS_DEPLOY_ROLE_ARN`, variables `AWS_REGION`,
-`ECR_REPOSITORY_BACKEND`, `ECR_REPOSITORY_FRONTEND`, `S3_BUCKET`, `EC2_INSTANCE_ID`,
-`APP_HOST`.
-
-### Protections en place
-
-- **Authentification basique** nginx sur tout le site sauf `/health` (`BASIC_AUTH_*`).
-- **Limite de débit** nginx : 1 génération/min par IP (marge de 2), une seule à la fois par
-  IP ; 30 requêtes/min sur le reste de l'API.
-- **Plafond global** côté backend (`MAX_CONCURRENT_GENERATIONS`) : 429 immédiat au-delà.
-- **Purge** des générations locales passé `GENERATION_TTL_SECONDS` ; en mode S3, la copie
-  locale est supprimée dès l'upload.
-
-## Limites connues
-
-Ce projet est une **démo fonctionnelle**, pas un service de production.
-
-- **Pas de HTTPS.** L'authentification basique circule en clair sur le port 80 : ajouter un
-  certificat (ALB + ACM, ou Caddy/certbot sur l'instance) avant d'y mettre un vrai mot de
-  passe.
-- **Requête synchrone de plusieurs minutes.** nginx l'autorise (900 s), mais un ALB placé
-  devant la coupera à 60 s par défaut : relever son `idle timeout`, ou passer à une
-  génération asynchrone (job + polling).
-- **La limite de débit est par IP**, et derrière un load balancer elle verrait l'IP du LB
-  (voir le commentaire en tête de `frontend/nginx.conf`).
-- **`terraform validate` prouve que le code est valide, pas qu'il respecte les paramètres
-  demandés.** Vérifier le nombre de subnets ou la présence de la NAT demanderait des
-  assertions sur le `plan`.
-- Seuls `cloud=aws` et `template=landing-zone` sont implémentés (les autres valeurs sont
-  refusées en 422).
-
-## Pistes
-
-- HTTPS
-- Génération asynchrone avec suivi de progression
-- Sortie structurée (JSON schema) côté modèle : supprimerait entièrement le parser maison
-- Assertions sur `terraform plan` pour valider le respect des paramètres
-
-## Structure
-
+```bash
+terraform fmt -check
+terraform init
+terraform validate
+terraform plan
 ```
-backend/
-  app.py                 point d'entrée FastAPI, CORS, logging
-  config.py              settings (clé API, modèle, timeouts, chemins)
-  routes/generate.py     orchestration du pipeline + boucle de réparation
-  schemas/               validation Pydantic des entrées
-  prompts/               landing_zone.py (génération) · repair.py (correction)
-  services/              ai/ · prompt · terraform (disque) · terraform_validator
-  parser/                découpage de la réponse du modèle
-  exceptions/            ApiException + handlers centralisés
-  utils/                 zip · stockage S3 · purge · pin des providers
-frontend/                Vue 3 via CDN, sans build ; nginx.conf + auth optionnelle
-tests/                   157 tests
-.github/workflows/       CI/CD vers EC2
+
+Only run `terraform apply` after reviewing the plan, permissions, and potential costs. Some AWS resources, particularly a NAT Gateway, may incur charges.
+
+## Tests and CI/CD
+
+Run the tests from the root of the repository:
+
+```bash
+python -m pytest -q
 ```
+
+The reviewed tests cover, among other things, input validation, the parser, error handling, file writing, simulated Terraform validation, and archive creation.
+
+The `.github/workflows/deploy.yml` workflow is associated with the `Deploy` pipeline. The described deployment workflow includes tests, image building, publishing to ECR, an SSM command, and a health check. **Verify the workflow and a successful execution before claiming that every step is operational in the published version.**
+
+## AWS Deployment
+
+The described deployment relies on the following components:
+
+- **EC2**: runs the containerized application.
+- **ECR**: stores Docker images.
+- **S3**: stores generated archives, if this option is configured.
+- **Systems Manager (SSM)**: administration and deployment channel.
+- **IAM and OIDC**: authorize the GitHub Actions workflow to access AWS resources.
+- **Groq API**: generates Terraform code.
+
+The described deployment uses a single EC2 instance and exposes the application over HTTP on port 80. The project's AWS infrastructure was created manually rather than being fully described in Terraform.
+
+To check the health of the deployed application:
+
+```bash
+curl http://<instance-host>/health
+```
+
+Replace the placeholder with the appropriate host in your private environment. Avoid publishing a public IP address if it is not necessary.
+
+## Security and Limitations
+
+The reviewed code includes several controls, including input validation, file path checks, execution timeouts for Terraform, and explicit CORS configuration.
+
+However, the project has several important limitations:
+
+- **HTTP only** in the described deployment: configure HTTPS before any real-world use, particularly if authentication is transmitted through the application.
+- **A single EC2 instance**: no demonstrated high availability or autoscaling.
+- **No automatic Terraform application**: the code must be reviewed and its plan examined.
+- **Generated code security is not guaranteed**: `terraform validate` checks the configuration, not all security risks or potential costs.
+- **Dependency on an external LLM**: provider availability and quotas may interrupt generation.
+- **AWS infrastructure created manually**: the deployment is not fully reproducible from an IaC repository.
+- **No security audit or penetration test performed**, according to the available documentation.
+
+Never publish API keys, GitHub secrets, AWS account credentials, sensitive ARNs, or logs containing tokens.
+
+## Possible Improvements
+
+- Add HTTPS, a domain name, and a stable IP address.
+- Describe the deployment infrastructure itself using Terraform.
+- Add static security analysis and cost estimation.
+- Test `terraform plan` in an isolated AWS account.
+- Expand the templates and consider other cloud providers.
+- Add monitoring and alerts.
+
+These are potential improvements, not features claimed to have already been delivered.
+
+## Author
+
+Personal engineering project completed as part of a final-year project at ENSA Oujda, in the Information Systems Management and Governance program, during a remote internship at Technologica (Oujda), according to the information provided in the project documentation.
+
+- GitHub: https://github.com/abdelmanan
+- LinkedIn: www.linkedin.com/in/abdelmanane-mahamat-6483b4224
