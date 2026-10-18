@@ -1,6 +1,5 @@
 name: Deploy
 
-# Tout commit sur main qui passe les tests part en production.
 on:
   #push:
    # branches: [main]
@@ -13,8 +12,6 @@ env:
 
 jobs:
 
-  # Un déploiement ne part jamais sans que la suite soit verte : c'est le seul
-  # garde-fou entre un commit et la production.
   test:
     runs-on: ubuntu-latest
     env:                                           
@@ -35,8 +32,6 @@ jobs:
     needs: test
     runs-on: ubuntu-latest
 
-    # Exigé par l'authentification OIDC : GitHub obtient un jeton court auprès
-    # d'AWS au lieu qu'on stocke une clé d'accès permanente en secret.
     permissions:
       id-token: write
       contents: read
@@ -58,8 +53,6 @@ jobs:
 
       - uses: docker/setup-buildx-action@v3
 
-      # Le SHA du commit sert de tag : chaque image est traçable jusqu'à sa
-      # ligne de code, et un retour arrière consiste à redéployer un ancien tag.
       - name: Build et push du backend
         uses: docker/build-push-action@v6
         with:
@@ -82,15 +75,11 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      # Le compose de prod est copié à chaque déploiement : l'instance n'a pas
-      # besoin d'un clone du dépôt, et le fichier ne peut pas dériver.
       - name: Envoi du compose de production sur S3
         run: |
           aws s3 cp docker-compose.prod.yml \
             "s3://${{ vars.S3_BUCKET }}/deploy/docker-compose.prod.yml"
 
-      # SSM plutôt que SSH : pas de clé privée dans les secrets GitHub, pas de
-      # port 22 ouvert sur l'instance, et chaque commande est auditée.
       - name: Déploiement sur l'EC2 via SSM
         run: |
           COMMAND_ID=$(aws ssm send-command \
