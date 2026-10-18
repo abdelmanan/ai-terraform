@@ -10,17 +10,11 @@ from backend.exceptions.api_exception import ApiException
 
 logger = logging.getLogger(__name__)
 
-# Terraform colourises its output; the escape codes would end up rendered as
-# junk in the browser and fed back into the self-repair prompt.
 NO_COLOR = "-no-color"
 
 
 class TerraformValidatorService:
 
-    # `init` downloads and unpacks the provider; measured at ~57s even with a
-    # warm plugin cache, so a 60s budget made a valid project fail at random.
-    # The budget also has to cover a cold cache, where the pinned provider is a
-    # 675 MB download: slow is acceptable, giving up on a valid project is not.
     INIT_TIMEOUT_SECONDS = 420
 
     COMMAND_TIMEOUT_SECONDS = 120
@@ -30,9 +24,6 @@ class TerraformValidatorService:
 
     def validate(self, project_path):
 
-        # Best effort: the model aligns attributes inconsistently, so the output
-        # is rarely fmt-clean. A failing fmt must never mask the validate error,
-        # hence the ignored return code.
         self._run(["terraform", "fmt", "-recursive", NO_COLOR], project_path)
 
         init_result = self._init(project_path)
@@ -55,13 +46,7 @@ class TerraformValidatorService:
         }
 
     def _init(self, project_path):
-        """Run `terraform init`, healing a stale local cache if needed.
-
-        We keep .terraform/ between runs because reinstalling the provider costs
-        ~40s. But it holds symlinks into the shared plugin cache, and a stale one
-        makes init fail with "cannot install package into target directory ...
-        because it is a symlink". Wiping and retrying recovers automatically.
-        """
+        """Run `terraform init`, healing a stale local cache if needed."""
 
         command = ["terraform", "init", "-input=false", NO_COLOR]
 
@@ -96,11 +81,6 @@ class TerraformValidatorService:
         started_at = time.monotonic()
 
         try:
-            # start_new_session puts terraform and its provider plugins in their
-            # own process group. Without it, a timeout kills terraform but leaves
-            # the plugin children running: they hold the provider binary open and
-            # every later `terraform init` fails with "text file busy" through the
-            # shared plugin cache. Observed for real, 17 minutes after the fact.
             process = subprocess.Popen(
                 command,
                 cwd=project_path,

@@ -4,16 +4,11 @@ from typing import Literal
 from pydantic import BaseModel, Field, field_validator
 
 PROJECT_NAME_PATTERN = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_-]{0,62}$")
-
-# Forme d'une région AWS (eu-west-3, us-gov-west-1, ap-southeast-4...). On ne
-# tient pas de liste exhaustive : elle dériverait à chaque nouvelle région.
 REGION_PATTERN = re.compile(r"^[a-z]{2}(-gov|-iso[a-z]?)?-[a-z]+-\d{1,2}$")
 
 
 class GenerateRequest(BaseModel):
 
-    # Seuls aws/landing-zone sont implémentés : `cloud="azure"` produisait
-    # quand même du Terraform AWS, en silence.
     cloud: Literal["aws"]
 
     project_name: str
