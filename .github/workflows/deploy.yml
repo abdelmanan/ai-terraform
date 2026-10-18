@@ -2,8 +2,8 @@ name: Deploy
 
 # Tout commit sur main qui passe les tests part en production.
 on:
-  push:
-    branches: [main]
+  #push:
+   # branches: [main]
   workflow_dispatch:
 
 env:
