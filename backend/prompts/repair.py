@@ -27,11 +27,6 @@ END_TERRAFORM
 
 Do NOT return unchanged files."""
 
-# A partial patch cannot fix an inconsistency *between* files: the model repairs
-# one side and breaks the other. Measured on "Missing required provider", where
-# main.tf used random_id and provider.tf never declared hashicorp/random.
-# The format template must stay visible in BOTH branches: without the explicit
-# example below, the model answered with prose and the parser found no markers.
 FULL_OUTPUT = """The previous targeted fix did not work, so rewrite the WHOLE project.
 
 Return ALL SIX files, consistent with one another. Every resource referenced

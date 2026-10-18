@@ -12,12 +12,7 @@ GENERATION_ID_PATTERN = re.compile(r"^[0-9a-f]{32}$")
 
 
 def purge_expired_generations(now=None):
-    """Delete generation directories older than GENERATION_TTL_SECONDS.
-
-    `generated/` was never cleaned and grew with every request, `.terraform`
-    directories included. Only directories named like a generation id are
-    touched, so nothing else stored there can be removed by mistake.
-    """
+    """Delete generation directories older than GENERATION_TTL_SECONDS."""
 
     root = settings.GENERATED_DIR
     now = time.time() if now is None else now
@@ -42,7 +37,6 @@ def purge_expired_generations(now=None):
             continue
 
         if expired:
-            # A purge failure must never fail the generation that triggered it.
             shutil.rmtree(path, ignore_errors=True)
             removed += 1
 

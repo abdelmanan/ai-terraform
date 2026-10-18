@@ -8,7 +8,7 @@ try:
     import boto3
     from botocore.exceptions import BotoCoreError, ClientError
 
-except ImportError:  # boto3 est inutile tant qu'on reste sur le disque local
+except ImportError:
     boto3 = None
     BotoCoreError = ClientError = ()
 
@@ -22,16 +22,7 @@ def is_remote():
 
 
 def publish_archive(zip_path, generation_id, project_name):
-    """Return the URL the browser must call to download `zip_path`.
-
-    Without S3_BUCKET the archive stays on local disk and we serve it ourselves,
-    which keeps ./run.sh and the test suite working with no AWS account at all.
-
-    With it, the archive is uploaded and we hand back a presigned URL. That is
-    what makes the container disposable: the download no longer requires the
-    very instance that produced the file to still be alive, so redeploying or
-    replacing the EC2 host never breaks a link a user already holds.
-    """
+    """Return the URL the browser must call to download `zip_path`."""
 
     if not is_remote():
         return f"/api/download/{generation_id}"
@@ -39,8 +30,6 @@ def publish_archive(zip_path, generation_id, project_name):
     if boto3 is None:
         raise StorageError("S3_BUCKET is set but boto3 is not installed.")
 
-    # The generation id in the key keeps two projects of the same name apart,
-    # and makes the object impossible to guess from the project name alone.
     key = f"{settings.S3_PREFIX.strip('/')}/{generation_id}/{project_name}.zip"
 
     client = boto3.client("s3", region_name=settings.AWS_REGION)

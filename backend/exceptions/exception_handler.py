@@ -49,8 +49,6 @@ def register_exception_handlers(app: FastAPI):
         request: Request,
         exc: Exception
     ):
-        # The traceback goes to the logs, never to the client: str(exc) leaked
-        # server paths and internals to anyone able to trigger a 500.
         logger.exception(
             "Unhandled error on %s %s", request.method, request.url.path
         )

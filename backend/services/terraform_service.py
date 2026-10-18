@@ -4,8 +4,6 @@ import shutil
 from backend.config import settings
 from backend.exceptions.api_exception import ApiException
 
-# Regenerable Terraform caches. Wiping them on every save forced a full
-# provider re-download (~57s vs ~13s) on each self-repair iteration.
 PRESERVED_ENTRIES = {".terraform", ".terraform.lock.hcl"}
 
 
@@ -13,8 +11,6 @@ class TerraformService:
 
     def save(self, generation_id, project_name, files):
 
-        # One directory per generation: two users picking the same project
-        # name used to overwrite each other's files and archive.
         project_path = os.path.join(settings.GENERATED_DIR, generation_id, project_name)
         project_dir_abs = os.path.abspath(project_path)
 

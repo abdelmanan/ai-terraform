@@ -96,20 +96,12 @@ class TerraformAIService:
 
         choice = response.choices[0]
 
-        # A truncated answer is not an error for the SDK: it arrives as a normal
-        # completion. Left undetected, it produced half a main.tf that looked
-        # perfectly well-formed.
         if getattr(choice, "finish_reason", None) == "length":
             logger.warning(
                 "Groq hit the %d token ceiling: the answer is truncated",
                 settings.AI_MAX_TOKENS
             )
 
-            # Logging this was not enough: the truncated files are still parsed
-            # and shipped, so the only person who could act on it — the user
-            # looking at a main.tf that stops mid-resource — never heard about
-            # it. Terraform usually catches it, but not always: a cut in the
-            # README or in an unreferenced output validates perfectly.
             if warnings is not None:
                 warnings.append(
                     "The AI answer was cut off at the "
